@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Elevate Fitness">
+  <defs>
+    <linearGradient id="sky" x1="96" y1="56" x2="426" y2="456" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8"/>
+      <stop offset=".52" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <filter id="shadow" x="-12%" y="-12%" width="124%" height="124%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#0f172a" flood-opacity=".22"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#sky)"/>
+  <circle cx="114" cy="104" r="72" fill="#dbeafe" opacity=".22"/>
+  <circle cx="438" cy="404" r="96" fill="#0f172a" opacity=".14"/>
+  <g filter="url(#shadow)">
+    <path d="M112 324h288c11 0 20 9 20 20v12c0 11-9 20-20 20H112c-11 0-20-9-20-20v-12c0-11 9-20 20-20Z" fill="#dbeafe" opacity=".9"/>
+    <rect x="82" y="206" width="38" height="122" rx="15" fill="#fff"/>
+    <rect x="138" y="166" width="44" height="202" rx="16" fill="#fff"/>
+    <rect x="330" y="166" width="44" height="202" rx="16" fill="#fff"/>
+    <rect x="392" y="206" width="38" height="122" rx="15" fill="#fff"/>
+    <path d="M206 136h100c12 0 22 10 22 22v25c0 12-10 22-22 22h-24v160c0 12-10 22-22 22h-30c-12 0-22-10-22-22V205h-2c-12 0-22-10-22-22v-25c0-12 10-22 22-22Z" fill="#fff"/>
+    <path d="M160 276h55l38 58 40-132 36 74h62" fill="none" stroke="#93c5fd" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M160 276h55l38 58 40-132 36 74h62" fill="none" stroke="#eff6ff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>
