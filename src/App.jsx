@@ -154,21 +154,36 @@ const createSessionFromPlan = (plan, sessions) => ({
 const AuthScreen = ({ onPreview }) => {
   const [email, setEmail] = useState(allowedEmails[0] || '');
   const [message, setMessage] = useState('');
+  const [messageType, setMessageType] = useState('info');
   const [busy, setBusy] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
+    setMessage('');
     if (!isAllowedEmail(email)) {
+      setMessageType('error');
       setMessage('That email is not on the private Elevate allowlist.');
       return;
     }
     setBusy(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
-    });
-    setBusy(false);
-    setMessage(error ? error.message : 'Check your email for the private sign-in link.');
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: window.location.origin, shouldCreateUser: false },
+      });
+      if (error) {
+        setMessageType('error');
+        setMessage(`${error.message} If this email was just created in Supabase, confirm it is listed under Authentication > Users.`);
+      } else {
+        setMessageType('success');
+        setMessage(`Sign-in link sent to ${email}. Open that email on this device and tap the link to continue.`);
+      }
+    } catch (sendError) {
+      setMessageType('error');
+      setMessage(sendError.message || 'Could not send the sign-in link. Check the Supabase Auth user and email settings.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -179,11 +194,14 @@ const AuthScreen = ({ onPreview }) => {
         <p>Use Tarae's seeded Supabase account. There is no public signup flow in the app.</p>
         <form onSubmit={submit} className="stack">
           <Field label="Email">
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" placeholder="tarae@example.com" />
+            <input value={email} onChange={(event) => {
+              setEmail(event.target.value);
+              setMessage('');
+            }} type="email" placeholder="tarae@example.com" />
           </Field>
           <button className="primary-button" disabled={busy}>{busy ? 'Sending...' : 'Send sign-in link'}</button>
         </form>
-        {message && <p className="notice">{message}</p>}
+        {message && <p className={`notice ${messageType}`} role="status">{message}</p>}
         <button className="ghost-button" onClick={onPreview}>Open preview mode</button>
       </section>
     </main>
