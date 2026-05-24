@@ -153,9 +153,11 @@ const createSessionFromPlan = (plan, sessions) => ({
 
 const AuthScreen = ({ onPreview }) => {
   const [email, setEmail] = useState(allowedEmails[0] || '');
+  const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('info');
   const [busy, setBusy] = useState(false);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -165,7 +167,40 @@ const AuthScreen = ({ onPreview }) => {
       setMessage('That email is not on the private Elevate allowlist.');
       return;
     }
+    if (!password) {
+      setMessageType('error');
+      setMessage('Enter the password for your seeded Supabase user.');
+      return;
+    }
     setBusy(true);
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) {
+        setMessageType('error');
+        setMessage(`${error.message} Check that Email/Password sign-in is enabled in Supabase and that this user has a password set.`);
+      } else {
+        setMessageType('success');
+        setMessage('Signed in. Elevate will keep you logged in on this device.');
+      }
+    } catch (signInError) {
+      setMessageType('error');
+      setMessage(signInError.message || 'Could not sign in. Check the Supabase Auth user and password settings.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sendMagicLink = async () => {
+    setMessage('');
+    if (!isAllowedEmail(email)) {
+      setMessageType('error');
+      setMessage('That email is not on the private Elevate allowlist.');
+      return;
+    }
+    setLinkBusy(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email,
@@ -176,13 +211,13 @@ const AuthScreen = ({ onPreview }) => {
         setMessage(`${error.message} If this email was just created in Supabase, confirm it is listed under Authentication > Users.`);
       } else {
         setMessageType('success');
-        setMessage(`Sign-in link sent to ${email}. Open that email on this device and tap the link to continue.`);
+        setMessage(`Magic link sent to ${email}. On iPhone, this may open Safari instead of the installed app, so password sign-in is better for daily use.`);
       }
     } catch (sendError) {
       setMessageType('error');
       setMessage(sendError.message || 'Could not send the sign-in link. Check the Supabase Auth user and email settings.');
     } finally {
-      setBusy(false);
+      setLinkBusy(false);
     }
   };
 
@@ -191,7 +226,7 @@ const AuthScreen = ({ onPreview }) => {
       <Logo />
       <section className="panel auth-panel">
         <h1>Private Elevate sign-in</h1>
-        <p>Use Tarae's seeded Supabase account. There is no public signup flow in the app.</p>
+        <p>Use Tarae's seeded Supabase account. Password sign-in keeps the installed app logged in.</p>
         <form onSubmit={submit} className="stack">
           <Field label="Email">
             <input value={email} onChange={(event) => {
@@ -199,9 +234,18 @@ const AuthScreen = ({ onPreview }) => {
               setMessage('');
             }} type="email" placeholder="tarae@example.com" />
           </Field>
-          <button className="primary-button" disabled={busy}>{busy ? 'Sending...' : 'Send sign-in link'}</button>
+          <Field label="Password">
+            <input value={password} onChange={(event) => {
+              setPassword(event.target.value);
+              setMessage('');
+            }} type="password" placeholder="Supabase user password" autoComplete="current-password" />
+          </Field>
+          <button className="primary-button" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
         </form>
         {message && <p className={`notice ${messageType}`} role="status">{message}</p>}
+        <button className="text-button auth-link-button" disabled={linkBusy} onClick={sendMagicLink}>
+          {linkBusy ? 'Sending link...' : 'Email me a magic link instead'}
+        </button>
         <button className="ghost-button" onClick={onPreview}>Open preview mode</button>
       </section>
     </main>
