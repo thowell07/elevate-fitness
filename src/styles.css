@@ -66,7 +66,7 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 
 .logo { display: inline-flex; flex-direction: column; align-items: center; gap: 4px; color: #111827; }
 .logo-word { font-size: 25px; font-weight: 900; text-transform: uppercase; letter-spacing: 0; line-height: 1; }
-.logo-compact { transform: scale(.78); transform-origin: left center; align-items: flex-start; }
+.logo-compact { transform: scale(.78); transform-origin: center top; align-items: center; }
 .logo-mark { position: relative; display: flex; align-items: center; gap: 5px; height: 46px; color: #111827; }
 .logo-mark span { display: block; width: 8px; border-radius: 5px; background: currentColor; }
 .logo-mark span:nth-child(1), .logo-mark span:nth-child(5) { height: 28px; }
@@ -95,7 +95,7 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 .hero .logo { color: #fff; }
 .hero .logo-mark { color: #fff; }
 .hero p { max-width: 300px; margin: 12px auto 0; color: rgba(255,255,255,.78); line-height: 1.45; }
-.screen-header { display: flex; flex-direction: column; gap: 4px; margin-bottom: 18px; }
+.screen-header { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 18px; text-align: center; }
 .screen-header > div { display: flex; align-items: center; gap: 9px; }
 .screen-header h1 { margin: 0; font-size: 25px; }
 .screen-header p { margin: 0; color: #64748b; line-height: 1.4; }
@@ -164,6 +164,14 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 .button-row { display: flex; align-items: center; gap: 10px; }
 .button-row .primary-button, .button-row .secondary-button { flex: 1; }
 .button-row.wrap { flex-wrap: wrap; justify-content: flex-start; }
+.text-button.danger { color: #dc2626; }
+.account-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.account-panel span { display: grid; gap: 3px; }
 
 .exercise-search { display: grid; gap: 12px; }
 .search-box { display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid #dbe3ef; border-radius: 14px; background: #fff; color: #64748b; }
@@ -188,6 +196,7 @@ small { color: #64748b; line-height: 1.35; }
 .section-toggle { width: 100%; border: 0; background: transparent; display: flex; justify-content: space-between; align-items: center; font-weight: 850; color: #111827; }
 .section-toggle span { display: inline-flex; align-items: center; gap: 8px; }
 
+.plan-fields { display: grid; gap: 12px; }
 .planned-exercise { display: grid; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid #e5edf7; border-radius: 8px; }
 .planned-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .set-table { display: grid; gap: 8px; }

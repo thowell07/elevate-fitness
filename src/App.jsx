@@ -18,6 +18,7 @@ import Repeat2 from 'lucide-react/dist/esm/icons/repeat-2.js';
 import Search from 'lucide-react/dist/esm/icons/search.js';
 import Settings from 'lucide-react/dist/esm/icons/settings.js';
 import StickyNote from 'lucide-react/dist/esm/icons/sticky-note.js';
+import Trash2 from 'lucide-react/dist/esm/icons/trash-2.js';
 import X from 'lucide-react/dist/esm/icons/x.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
@@ -138,9 +139,9 @@ const createSessionFromPlan = (plan, sessions) => ({
         normalizeSet(
           {
             ...set,
-            actualReps: '',
-            actualWeight: '',
-            actualTime: '',
+            actualReps: set.actualReps || set.plannedReps || '',
+            actualWeight: set.actualWeight || set.plannedWeight || '',
+            actualTime: set.actualTime || set.plannedTime || '',
             completed: false,
             previousSnapshot: previous?.log?.sets?.[index] ? performedSetSummary(previous.log.sets[index]) : '',
           },
@@ -353,7 +354,7 @@ const CustomExerciseForm = ({ onSave }) => {
   );
 };
 
-const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy }) => {
+const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut }) => {
   const today = todayISO();
   const todaysPlan = data.plannedWorkouts.find((plan) => plan.date === today && plan.status !== 'completed');
   const completedThisWeek = data.workoutSessions.filter((session) => {
@@ -421,6 +422,16 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
         ))}
         {!data.workoutSessions.some((session) => session.status === 'completed') && <p className="empty">No completed workouts yet.</p>}
       </section>
+
+      {!preview && (
+        <section className="panel account-panel">
+          <span>
+            <strong>Account</strong>
+            <small>Private Elevate access</small>
+          </span>
+          <button className="secondary-button" onClick={onSignOut}><LogOut size={17} /> Sign out</button>
+        </section>
+      )}
     </div>
   );
 };
@@ -476,7 +487,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
     <div className="screen">
       <ScreenHeader icon={CalendarPlus} title="Workout plan" subtitle="Build the session before you start." />
       <section className="panel stack">
-        <div className="two-col">
+        <div className="plan-fields">
           <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
           <Field label="Title"><input value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
         </div>
@@ -563,6 +574,22 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
     }));
     setSwapFor(null);
   };
+  const removeExercise = (logId) => {
+    const log = session.exerciseLogs.find((item) => item.id === logId);
+    const hasRecordedWork = log?.sets?.some(
+      (set) =>
+        set.completed ||
+        set.actualReps !== (set.plannedReps || '') ||
+        set.actualWeight !== (set.plannedWeight || '') ||
+        set.actualTime !== (set.plannedTime || '')
+    );
+    if (hasRecordedWork && !window.confirm('Remove this exercise and its recorded sets from the active workout?')) return;
+    updateSession({
+      ...session,
+      exerciseLogs: session.exerciseLogs.filter((log) => log.id !== logId),
+    });
+    if (swapFor === logId) setSwapFor(null);
+  };
 
   return (
     <div className="screen">
@@ -605,6 +632,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
                 <div className="button-row wrap">
                   <button className="text-button" onClick={() => addSet(log.id)}><Plus size={16} /> Add set</button>
                   <button className="text-button" onClick={() => setSwapFor(swapFor === log.id ? null : log.id)}><Repeat2 size={16} /> Swap exercise</button>
+                  <button className="text-button danger" onClick={() => removeExercise(log.id)}><Trash2 size={16} /> Remove</button>
                 </div>
                 {swapFor === log.id && <ExerciseSearch exercises={exercises} compact onAdd={(exercise) => swapExercise(log.id, exercise)} />}
                 <div className="detail-tabs">
@@ -954,6 +982,10 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [store, userId]);
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0 });
+  }, [activeTab]);
+
   const saveData = async (action, nextData) => {
     setError('');
     setData((current) => ({ ...current, ...nextData }));
@@ -1046,6 +1078,13 @@ export default function App() {
     });
   };
 
+  const signOut = async () => {
+    const message = session
+      ? 'Sign out of Elevate? Your active workout has been saved, but you will leave this session view.'
+      : 'Sign out of Elevate?';
+    if (window.confirm(message)) await supabase.auth.signOut();
+  };
+
   if (loading) return <main className="loading-screen"><Logo /><p>Loading Elevate...</p></main>;
   if (isSupabaseConfigured && !preview && !user) return <AuthScreen onPreview={() => setPreview(true)} />;
   if (user && !preview && !isAllowedEmail(user.email)) {
@@ -1074,6 +1113,8 @@ export default function App() {
             storeMode={store.mode}
             legacySummary={legacySummary}
             importLegacy={importLegacy}
+            preview={preview}
+            onSignOut={signOut}
           />
         )}
         {activeTab === 'plan' && (
@@ -1114,12 +1155,6 @@ export default function App() {
           <button className={activeTab === 'active' ? 'active' : ''} onClick={() => setActiveTab('active')}>
             <Dumbbell size={21} />
             <span>Active</span>
-          </button>
-        )}
-        {!preview && (
-          <button onClick={() => supabase.auth.signOut()}>
-            <LogOut size={21} />
-            <span>Out</span>
           </button>
         )}
       </nav>
