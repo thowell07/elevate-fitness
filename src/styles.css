@@ -197,6 +197,52 @@ small { color: #64748b; line-height: 1.35; }
 .section-toggle span { display: inline-flex; align-items: center; gap: 8px; }
 
 .plan-fields { display: grid; gap: 12px; }
+.date-control {
+  position: relative;
+  min-height: 56px;
+  overflow: hidden;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff, #f8fafc);
+}
+.date-control input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+.date-control-face {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  color: #111827;
+}
+.date-control-face span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.date-control-face svg { color: #2563eb; flex: 0 0 auto; }
+.date-control-face strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 850;
+  text-transform: none;
+}
 .planned-exercise { display: grid; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid #e5edf7; border-radius: 8px; }
 .planned-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .set-table { display: grid; gap: 8px; }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'elevate-shell-v2';
+const CACHE_NAME = 'elevate-shell-v3';
 const APP_SHELL = ['/', '/manifest.webmanifest', '/icons/elevate-icon.svg'];
 
 self.addEventListener('install', (event) => {

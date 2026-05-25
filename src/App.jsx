@@ -70,6 +70,23 @@ const Field = ({ label, children }) => (
   </label>
 );
 
+const PlanDateField = ({ value, onChange }) => (
+  <Field label="Date">
+    <div className="date-control">
+      <input
+        type="date"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label="Workout date"
+      />
+      <div className="date-control-face">
+        <span><CalendarPlus size={18} /> <strong>{formatDate(value)}</strong></span>
+        <ChevronDown size={17} />
+      </div>
+    </div>
+  </Field>
+);
+
 const getAllExercises = (customExercises) =>
   [...presetExercises, ...customExercises].sort((a, b) => a.name.localeCompare(b.name));
 
@@ -488,7 +505,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       <ScreenHeader icon={CalendarPlus} title="Workout plan" subtitle="Build the session before you start." />
       <section className="panel stack">
         <div className="plan-fields">
-          <Field label="Date"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
+          <PlanDateField value={date} onChange={setDate} />
           <Field label="Title"><input value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
         </div>
         <Field label="Workout notes"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Focus, constraints, or reminders for this workout" /></Field>
