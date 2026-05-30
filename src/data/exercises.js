@@ -163,5 +163,6 @@ export const defaultHabits = [
   { id: 'meditation', name: 'Meditation' },
   { id: 'water', name: '3L Water' },
   { id: 'protein', name: 'Protein Goal' },
-  { id: 'mobility', name: 'Stretch / Mobility' }
+  { id: 'mobility', name: 'Stretch / Mobility' },
+  { id: 'special-time-dalton', name: 'Special Time - Dalton' }
 ];
