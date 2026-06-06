@@ -195,6 +195,14 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 small { color: #64748b; line-height: 1.35; }
 .section-toggle { width: 100%; border: 0; background: transparent; display: flex; justify-content: space-between; align-items: center; font-weight: 850; color: #111827; }
 .section-toggle span { display: inline-flex; align-items: center; gap: 8px; }
+.custom-exercise-inline {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5edf7;
+  border-radius: 8px;
+  background: #f8fafc;
+}
 
 .plan-fields { display: grid; gap: 12px; }
 .date-control {
@@ -284,6 +292,8 @@ small { color: #64748b; line-height: 1.35; }
 }
 .history-mini span, .metric-row span { color: #64748b; font-size: 13px; text-align: right; }
 .workout-note { margin-bottom: 12px; }
+.swap-panel, .active-add-body { padding-top: 2px; }
+.active-add-panel { margin-top: 4px; }
 .sticky-actions {
   position: sticky;
   bottom: 86px;

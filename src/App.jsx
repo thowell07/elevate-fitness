@@ -112,6 +112,47 @@ const createPlanExercise = (exercise, position) => ({
   restSeconds: Number(exercise.defaultRestSeconds || 90),
 });
 
+const createSessionSet = (sourceSet, index, previousLog) => {
+  const { id: _sourceSetId, setNumber: _sourceSetNumber, ...set } = sourceSet || {};
+  return normalizeSet(
+    {
+      ...set,
+      actualReps: set.actualReps || set.plannedReps || '',
+      actualWeight: set.actualWeight || set.plannedWeight || '',
+      actualTime: set.actualTime || set.plannedTime || '',
+      completed: false,
+      previousSnapshot: previousLog?.sets?.[index] ? performedSetSummary(previousLog.sets[index]) : '',
+    },
+    index
+  );
+};
+
+const createExerciseLog = (exercise, sessions) => {
+  const previous = lastCompletedLog(sessions, exercise.id);
+  const setCount = Math.max(1, Number(exercise.defaultSets || 3));
+  return {
+    id: uid('exercise-log'),
+    exerciseId: exercise.id,
+    exerciseName: exercise.name,
+    group: exercise.group,
+    equipment: exercise.equipment || '',
+    instructions: exercise.instructions || '',
+    collapsed: false,
+    notes: '',
+    sets: Array.from({ length: setCount }, (_, index) =>
+      createSessionSet(
+        {
+          plannedReps: exercise.tracking === 'time' ? '' : exercise.defaultReps || '',
+          plannedWeight: '',
+          plannedTime: exercise.tracking === 'time' ? exercise.defaultReps || '' : '',
+        },
+        index,
+        previous?.log
+      )
+    ),
+  };
+};
+
 const lastCompletedLog = (sessions, exerciseId) => {
   const completed = sessions
     .filter((session) => session.status === 'completed')
@@ -152,19 +193,7 @@ const createSessionFromPlan = (plan, sessions) => ({
       group: plannedExercise.group,
       collapsed: false,
       notes: '',
-      sets: plannedExercise.sets.map((set, index) =>
-        normalizeSet(
-          {
-            ...set,
-            actualReps: set.actualReps || set.plannedReps || '',
-            actualWeight: set.actualWeight || set.plannedWeight || '',
-            actualTime: set.actualTime || set.plannedTime || '',
-            completed: false,
-            previousSnapshot: previous?.log?.sets?.[index] ? performedSetSummary(previous.log.sets[index]) : '',
-          },
-          index
-        )
-      ),
+      sets: plannedExercise.sets.map((set, index) => createSessionSet(set, index, previous?.log)),
     };
   }),
 });
@@ -308,36 +337,54 @@ const ExerciseSearch = ({ exercises, onAdd, compact = false }) => {
   );
 };
 
-const CustomExerciseForm = ({ onSave }) => {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({
-    name: '',
-    group: 'Push',
-    equipment: '',
-    instructions: '',
-    defaultSets: 3,
-    defaultReps: '8-10',
-    defaultRestSeconds: 90,
-    tracking: 'weight_reps',
-  });
+const buildExerciseDraft = (group = 'Push') => ({
+  name: '',
+  group,
+  equipment: '',
+  instructions: '',
+  defaultSets: 3,
+  defaultReps: '8-10',
+  defaultRestSeconds: 90,
+  tracking: 'weight_reps',
+});
 
-  const save = () => {
+const CustomExerciseForm = ({
+  onSave,
+  title = 'Custom exercise',
+  buttonLabel = 'Save custom exercise',
+  defaultGroup = 'Push',
+  asPanel = true,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(() => buildExerciseDraft(defaultGroup));
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
     if (!draft.name.trim()) return;
-    onSave({
+    const exercise = {
       ...draft,
+      name: draft.name.trim(),
       id: uid('custom-exercise'),
       primaryMuscles: [],
       secondaryMuscles: [],
       isCustom: true,
-    });
-    setDraft({ ...draft, name: '', equipment: '', instructions: '' });
-    setOpen(false);
+    };
+    setSaving(true);
+    try {
+      await Promise.resolve(onSave(exercise));
+      setDraft({ ...draft, name: '', equipment: '', instructions: '' });
+      setOpen(false);
+    } finally {
+      setSaving(false);
+    }
   };
 
+  const Wrapper = asPanel ? 'section' : 'div';
+
   return (
-    <section className="panel">
+    <Wrapper className={asPanel ? 'panel' : 'custom-exercise-inline'}>
       <button className="section-toggle" onClick={() => setOpen(!open)}>
-        <span><Plus size={18} /> Custom exercise</span>
+        <span><Plus size={18} /> {title}</span>
         {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
       </button>
       {open && (
@@ -364,10 +411,10 @@ const CustomExerciseForm = ({ onSave }) => {
             <Field label="Target"><input value={draft.defaultReps} onChange={(event) => setDraft({ ...draft, defaultReps: event.target.value })} /></Field>
             <Field label="Rest"><input type="number" value={draft.defaultRestSeconds} onChange={(event) => setDraft({ ...draft, defaultRestSeconds: event.target.value })} /></Field>
           </div>
-          <button className="primary-button" onClick={save}>Save custom exercise</button>
+          <button className="primary-button" onClick={save} disabled={saving}>{saving ? 'Saving...' : buttonLabel}</button>
         </div>
       )}
-    </section>
+    </Wrapper>
   );
 };
 
@@ -556,9 +603,10 @@ const ScreenHeader = ({ icon: IconComponent, title, subtitle }) => (
   </header>
 );
 
-const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, saveExerciseNote, clearActive }) => {
+const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, saveExerciseNote, saveCustomExercise, clearActive }) => {
   const [detailTabs, setDetailTabs] = useState({});
   const [swapFor, setSwapFor] = useState(null);
+  const [addingExercise, setAddingExercise] = useState(false);
 
   const patchLog = (logId, updater) => {
     updateSession({
@@ -566,11 +614,49 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
       exerciseLogs: session.exerciseLogs.map((log) => (log.id === logId ? updater(log) : log)),
     });
   };
-  const patchSet = (logId, setId, patch) => {
-    patchLog(logId, (log) => ({ ...log, sets: log.sets.map((set) => (set.id === setId ? { ...set, ...patch } : set)) }));
+  const patchSet = (logId, setId, setIndex, patch) => {
+    patchLog(logId, (log) => ({
+      ...log,
+      sets: log.sets.map((set, index) => (set.id === setId && index === setIndex ? { ...set, ...patch } : set)),
+    }));
+  };
+  const patchAllSetWeights = (logId, weight) => {
+    patchLog(logId, (log) => ({ ...log, sets: log.sets.map((set) => ({ ...set, actualWeight: weight })) }));
   };
   const addSet = (logId) => {
-    patchLog(logId, (log) => ({ ...log, sets: [...log.sets, normalizeSet(log.sets.at(-1) || {}, log.sets.length)] }));
+    patchLog(logId, (log) => {
+      const lastSet = log.sets.at(-1) || {};
+      return {
+        ...log,
+        sets: [
+          ...log.sets,
+          normalizeSet(
+            {
+              plannedReps: lastSet.plannedReps || '',
+              plannedWeight: lastSet.plannedWeight || '',
+              plannedTime: lastSet.plannedTime || '',
+              actualReps: lastSet.actualReps || lastSet.plannedReps || '',
+              actualWeight: lastSet.actualWeight || lastSet.plannedWeight || '',
+              actualTime: lastSet.actualTime || lastSet.plannedTime || '',
+              previousSnapshot: '',
+              completed: false,
+            },
+            log.sets.length
+          ),
+        ],
+      };
+    });
+  };
+  const addExercise = (exercise) => {
+    updateSession({
+      ...session,
+      exerciseLogs: [...session.exerciseLogs, createExerciseLog(exercise, data.workoutSessions)],
+    });
+    setAddingExercise(false);
+  };
+  const saveAndAddCustomExercise = async (exercise) => {
+    await saveCustomExercise(exercise);
+    addExercise(exercise);
   };
   const swapExercise = (logId, exercise) => {
     patchLog(logId, (log) => ({
@@ -578,6 +664,8 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
       exerciseId: exercise.id,
       exerciseName: exercise.name,
       group: exercise.group,
+      equipment: exercise.equipment || '',
+      instructions: exercise.instructions || '',
       sets: log.sets.map((set, index) => {
         const previous = lastCompletedLog(data.workoutSessions, exercise.id);
         return normalizeSet(
@@ -590,6 +678,10 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
       }),
     }));
     setSwapFor(null);
+  };
+  const saveAndSwapCustomExercise = async (logId, exercise) => {
+    await saveCustomExercise(exercise);
+    swapExercise(logId, exercise);
   };
   const removeExercise = (logId) => {
     const log = session.exerciseLogs.find((item) => item.id === logId);
@@ -637,10 +729,10 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
                       <strong>{index + 1}</strong>
                       <small>{set.previousSnapshot || 'New'}</small>
                       <div className="today-inputs">
-                        <input value={set.actualWeight} onChange={(event) => patchSet(log.id, set.id, { actualWeight: event.target.value })} placeholder="lbs" inputMode="decimal" />
-                        <input value={set.actualReps} onChange={(event) => patchSet(log.id, set.id, { actualReps: event.target.value })} placeholder="reps" inputMode="decimal" />
+                        <input value={set.actualWeight} onChange={(event) => patchAllSetWeights(log.id, event.target.value)} placeholder="lbs" inputMode="decimal" />
+                        <input value={set.actualReps} onChange={(event) => patchSet(log.id, set.id, index, { actualReps: event.target.value })} placeholder="reps" inputMode="decimal" />
                       </div>
-                      <button className={`check-button ${set.completed ? 'done' : ''}`} onClick={() => patchSet(log.id, set.id, { completed: !set.completed })} aria-label="Toggle set complete">
+                      <button className={`check-button ${set.completed ? 'done' : ''}`} onClick={() => patchSet(log.id, set.id, index, { completed: !set.completed })} aria-label="Toggle set complete">
                         <Check size={18} />
                       </button>
                     </div>
@@ -651,7 +743,18 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
                   <button className="text-button" onClick={() => setSwapFor(swapFor === log.id ? null : log.id)}><Repeat2 size={16} /> Swap exercise</button>
                   <button className="text-button danger" onClick={() => removeExercise(log.id)}><Trash2 size={16} /> Remove</button>
                 </div>
-                {swapFor === log.id && <ExerciseSearch exercises={exercises} compact onAdd={(exercise) => swapExercise(log.id, exercise)} />}
+                {swapFor === log.id && (
+                  <div className="swap-panel stack">
+                    <ExerciseSearch exercises={exercises} compact onAdd={(exercise) => swapExercise(log.id, exercise)} />
+                    <CustomExerciseForm
+                      asPanel={false}
+                      title="New custom replacement"
+                      buttonLabel="Save and swap in"
+                      defaultGroup={log.group || 'Push'}
+                      onSave={(exercise) => saveAndSwapCustomExercise(log.id, exercise)}
+                    />
+                  </div>
+                )}
                 <div className="detail-tabs">
                   <TabButton active={tab === 'how'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: 'how' })}><BookOpen size={16} /> How To</TabButton>
                   <TabButton active={tab === 'history'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: 'history' })}><History size={16} /> History</TabButton>
@@ -670,6 +773,23 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
           </section>
         );
       })}
+      <section className="panel active-add-panel">
+        <button className="section-toggle" onClick={() => setAddingExercise(!addingExercise)}>
+          <span><Plus size={18} /> Add exercise</span>
+          {addingExercise ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        </button>
+        {addingExercise && (
+          <div className="stack active-add-body">
+            <ExerciseSearch exercises={exercises} compact onAdd={addExercise} />
+            <CustomExerciseForm
+              asPanel={false}
+              title="New custom exercise"
+              buttonLabel="Save and add"
+              onSave={saveAndAddCustomExercise}
+            />
+          </div>
+        )}
+      </section>
       <div className="sticky-actions">
         <button className="ghost-button" onClick={clearActive}>Close</button>
         <button className="primary-button" onClick={() => finishSession({ ...session, status: 'completed', dateCompleted: new Date().toISOString() })}>
@@ -1151,6 +1271,7 @@ export default function App() {
             updateSession={saveActiveSession}
             finishSession={finishSession}
             saveExerciseNote={saveExerciseNote}
+            saveCustomExercise={saveCustomExercise}
             clearActive={() => setActiveTab('home')}
           />
         )}
