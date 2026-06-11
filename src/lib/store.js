@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { attachWorkoutDetails, createWorkoutDetails, DEFAULT_WORKOUT_TYPE, extractWorkoutDetails } from './workoutDetails';
 
 const emptyBundle = {
   customExercises: [],
@@ -56,26 +57,44 @@ export const createSupabaseStore = () => ({
     const error = [customs, plans, sessions, notes, metrics, habits].find((result) => result.error)?.error;
     if (error) throw error;
 
-    return {
-      customExercises: customs.data.map(fromCustomRow),
-      plannedWorkouts: plans.data.map((row) => ({
+    const plannedWorkouts = plans.data.map((row) => {
+      const { details, items } = extractWorkoutDetails(row.exercises, { title: row.title });
+      return {
         id: row.id,
         date: row.date,
-        title: row.title,
+        title: details.workoutType,
+        workoutType: details.workoutType,
+        warmUp: details.warmUp,
+        coolDown: details.coolDown,
+        crossFitWorkout: details.crossFitWorkout,
         status: row.status,
         notes: row.notes || '',
-        exercises: row.exercises || [],
+        exercises: items,
         updatedAt: row.updated_at,
-      })),
-      workoutSessions: sessions.data.map((row) => ({
+      };
+    });
+    const workoutSessions = sessions.data.map((row) => {
+      const { details, items } = extractWorkoutDetails(row.exercise_logs);
+      return {
         id: row.id,
         plannedWorkoutId: row.planned_workout_id,
         dateStarted: row.date_started,
         dateCompleted: row.date_completed,
         status: row.status,
+        title: details.workoutType,
+        workoutType: details.workoutType,
+        warmUp: details.warmUp,
+        coolDown: details.coolDown,
+        crossFitWorkout: details.crossFitWorkout,
         notes: row.notes || '',
-        exerciseLogs: row.exercise_logs || [],
-      })),
+        exerciseLogs: items,
+      };
+    });
+
+    return {
+      customExercises: customs.data.map(fromCustomRow),
+      plannedWorkouts,
+      workoutSessions,
       exerciseNotes: Object.fromEntries(notes.data.map((row) => [row.exercise_id, row.note || ''])),
       metricScans: metrics.data.map((row) => ({
         id: row.id,
@@ -98,19 +117,21 @@ export const createSupabaseStore = () => ({
     if (error) throw error;
   },
   async savePlannedWorkout(userId, plan) {
+    const details = createWorkoutDetails({ ...plan, workoutType: plan.workoutType || plan.title });
     const { error } = await supabase.from('planned_workouts').upsert({
       id: plan.id,
       user_id: userId,
       date: plan.date,
-      title: plan.title,
+      title: details.workoutType,
       status: plan.status || 'planned',
       notes: plan.notes || '',
-      exercises: plan.exercises || [],
+      exercises: attachWorkoutDetails(plan.exercises, details),
       updated_at: new Date().toISOString(),
     });
     if (error) throw error;
   },
   async saveSession(userId, session) {
+    const details = createWorkoutDetails({ ...session, workoutType: session.workoutType || session.title });
     const { error } = await supabase.from('workout_sessions').upsert({
       id: session.id,
       user_id: userId,
@@ -119,7 +140,7 @@ export const createSupabaseStore = () => ({
       date_completed: session.dateCompleted || null,
       status: session.status,
       notes: session.notes || '',
-      exercise_logs: session.exerciseLogs || [],
+      exercise_logs: attachWorkoutDetails(session.exerciseLogs, details),
     });
     if (error) throw error;
   },
@@ -164,7 +185,11 @@ export const createPreviewStore = () => {
       {
         id: 'preview-plan',
         date: new Date().toISOString().slice(0, 10),
-        title: 'Today Strength',
+        title: DEFAULT_WORKOUT_TYPE,
+        workoutType: DEFAULT_WORKOUT_TYPE,
+        warmUp: '',
+        coolDown: '',
+        crossFitWorkout: '',
         status: 'planned',
         notes: '',
         exercises: [

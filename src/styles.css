@@ -204,7 +204,7 @@ small { color: #64748b; line-height: 1.35; }
   background: #f8fafc;
 }
 
-.plan-fields { display: grid; gap: 12px; }
+.plan-fields, .plan-text-grid { display: grid; gap: 12px; }
 .date-control {
   position: relative;
   min-height: 56px;
@@ -281,7 +281,10 @@ small { color: #64748b; line-height: 1.35; }
 .detail-tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
 .tab-button { min-height: 38px; border: 1px solid #dbe3ef; border-radius: 12px; background: #fff; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 5px; font-size: 12px; font-weight: 850; }
 .tab-button.active { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; }
-.detail-copy, .note-copy { margin: 0; color: #475569; line-height: 1.55; background: #f8fafc; padding: 12px; border-radius: 8px; }
+.detail-copy, .note-copy { margin: 0; color: #475569; line-height: 1.55; background: #f8fafc; padding: 12px; border-radius: 8px; white-space: pre-wrap; }
+.large-textarea { min-height: 156px; }
+.workout-type-label { margin: -4px 0 10px; color: #2563eb; font-size: 12px; font-weight: 850; text-transform: uppercase; }
+.panel > .note-copy + .note-copy { margin-top: 8px; }
 .history-mini { display: grid; gap: 8px; }
 .history-mini div, .metric-row {
   display: flex;

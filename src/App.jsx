@@ -25,6 +25,7 @@ import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { allowedEmails, isAllowedEmail, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
+import { DEFAULT_WORKOUT_TYPE, isCrossFitWorkout, normalizeWorkoutType, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
   customExercises: [],
@@ -177,26 +178,37 @@ const setSummary = (set, fallbackToPlan = true) => {
 
 const performedSetSummary = (set) => (set.completed ? setSummary(set, false) : '');
 
-const createSessionFromPlan = (plan, sessions) => ({
-  id: uid('session'),
-  plannedWorkoutId: plan.id,
-  dateStarted: new Date().toISOString(),
-  dateCompleted: null,
-  status: 'active',
-  notes: plan.notes || '',
-  exerciseLogs: plan.exercises.map((plannedExercise) => {
-    const previous = lastCompletedLog(sessions, plannedExercise.exerciseId);
-    return {
-      id: uid('exercise-log'),
-      exerciseId: plannedExercise.exerciseId,
-      exerciseName: plannedExercise.exerciseName,
-      group: plannedExercise.group,
-      collapsed: false,
-      notes: '',
-      sets: plannedExercise.sets.map((set, index) => createSessionSet(set, index, previous?.log)),
-    };
-  }),
-});
+const createSessionFromPlan = (plan, sessions) => {
+  const workoutType = normalizeWorkoutType(plan.workoutType || plan.title);
+  const crossFit = isCrossFitWorkout(workoutType);
+  return {
+    id: uid('session'),
+    plannedWorkoutId: plan.id,
+    dateStarted: new Date().toISOString(),
+    dateCompleted: null,
+    status: 'active',
+    title: workoutType,
+    workoutType,
+    warmUp: plan.warmUp || '',
+    coolDown: plan.coolDown || '',
+    crossFitWorkout: plan.crossFitWorkout || '',
+    notes: plan.notes || '',
+    exerciseLogs: crossFit
+      ? []
+      : plan.exercises.map((plannedExercise) => {
+          const previous = lastCompletedLog(sessions, plannedExercise.exerciseId);
+          return {
+            id: uid('exercise-log'),
+            exerciseId: plannedExercise.exerciseId,
+            exerciseName: plannedExercise.exerciseName,
+            group: plannedExercise.group,
+            collapsed: false,
+            notes: '',
+            sets: plannedExercise.sets.map((set, index) => createSessionSet(set, index, previous?.log)),
+          };
+        }),
+  };
+};
 
 const AuthScreen = ({ onPreview }) => {
   const [email, setEmail] = useState(allowedEmails[0] || '');
@@ -479,8 +491,8 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
           <div className="activity-row" key={session.id}>
             <Dumbbell size={18} />
             <span>
-              <strong>{session.exerciseLogs?.[0]?.exerciseName || 'Workout'}</strong>
-              <small>{formatDate(session.dateCompleted || session.dateStarted)} / {session.exerciseLogs?.length || 0} exercises</small>
+              <strong>{session.exerciseLogs?.[0]?.exerciseName || session.workoutType || 'Workout'}</strong>
+              <small>{formatDate(session.dateCompleted || session.dateStarted)} / {isCrossFitWorkout(session.workoutType || session.title) ? 'CrossFit log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</small>
             </span>
           </div>
         ))}
@@ -503,16 +515,24 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
 const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) => {
   const [date, setDate] = useState(todayISO());
   const existingPlan = data.plannedWorkouts.find((plan) => plan.date === date && plan.status !== 'completed');
-  const [title, setTitle] = useState(existingPlan?.title || 'Today Strength');
+  const [workoutType, setWorkoutType] = useState(normalizeWorkoutType(existingPlan?.workoutType || existingPlan?.title || DEFAULT_WORKOUT_TYPE));
+  const [warmUp, setWarmUp] = useState(existingPlan?.warmUp || '');
+  const [coolDown, setCoolDown] = useState(existingPlan?.coolDown || '');
+  const [crossFitWorkout, setCrossFitWorkout] = useState(existingPlan?.crossFitWorkout || '');
   const [notes, setNotes] = useState(existingPlan?.notes || '');
   const [plannedExercises, setPlannedExercises] = useState(existingPlan?.exercises || []);
 
   useEffect(() => {
     const plan = data.plannedWorkouts.find((item) => item.date === date && item.status !== 'completed');
-    setTitle(plan?.title || 'Today Strength');
+    setWorkoutType(normalizeWorkoutType(plan?.workoutType || plan?.title || DEFAULT_WORKOUT_TYPE));
+    setWarmUp(plan?.warmUp || '');
+    setCoolDown(plan?.coolDown || '');
+    setCrossFitWorkout(plan?.crossFitWorkout || '');
     setNotes(plan?.notes || '');
     setPlannedExercises(plan?.exercises || []);
   }, [date, data.plannedWorkouts]);
+
+  const crossFit = isCrossFitWorkout(workoutType);
 
   const addExercise = (exercise) => setPlannedExercises((items) => [...items, createPlanExercise(exercise, items.length + 1)]);
   const updateSet = (exerciseId, setId, patch) => {
@@ -538,14 +558,20 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
     const plan = {
       id: existingPlan?.id || uid('plan'),
       date,
-      title,
+      title: workoutType,
+      workoutType,
+      warmUp,
+      coolDown,
+      crossFitWorkout,
       notes,
       status: 'planned',
-      exercises: plannedExercises.map((exercise, index) => ({ ...exercise, position: index + 1 })),
+      exercises: crossFit ? [] : plannedExercises.map((exercise, index) => ({ ...exercise, position: index + 1 })),
     };
     await savePlan(plan);
     return plan;
   };
+
+  const canSavePlan = crossFit || plannedExercises.length > 0;
 
   return (
     <div className="screen">
@@ -553,44 +579,71 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       <section className="panel stack">
         <div className="plan-fields">
           <PlanDateField value={date} onChange={setDate} />
-          <Field label="Title"><input value={title} onChange={(event) => setTitle(event.target.value)} /></Field>
+          <Field label="Workout type">
+            <select value={workoutType} onChange={(event) => setWorkoutType(event.target.value)}>
+              {WORKOUT_TYPE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </Field>
         </div>
+        <div className="plan-text-grid">
+          <Field label="Warm up">
+            <textarea value={warmUp} onChange={(event) => setWarmUp(event.target.value)} placeholder="Mobility, activation, or prep work" />
+          </Field>
+          <Field label="Cool down">
+            <textarea value={coolDown} onChange={(event) => setCoolDown(event.target.value)} placeholder="Stretching, breathing, or recovery notes" />
+          </Field>
+        </div>
+        {crossFit && (
+          <Field label="Full CrossFit workout">
+            <textarea className="large-textarea" value={crossFitWorkout} onChange={(event) => setCrossFitWorkout(event.target.value)} placeholder="Write the full class workout here" />
+          </Field>
+        )}
         <Field label="Workout notes"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Focus, constraints, or reminders for this workout" /></Field>
-      </section>
-
-      <section className="panel">
-        <div className="section-heading"><h2>Exercise database</h2><span>{exercises.length} exercises</span></div>
-        <ExerciseSearch exercises={exercises} onAdd={addExercise} />
-      </section>
-      <CustomExerciseForm onSave={saveCustomExercise} />
-
-      <section className="panel stack">
-        <div className="section-heading"><h2>Planned exercises</h2><span>{plannedExercises.length}</span></div>
-        {plannedExercises.map((exercise) => (
-          <div className="planned-exercise" key={exercise.id}>
-            <div className="planned-title">
-              <span><strong>{exercise.exerciseName}</strong><small>{exercise.group}</small></span>
-              <button className="icon-button subtle" onClick={() => removeExercise(exercise.id)} aria-label="Remove exercise"><X size={17} /></button>
-            </div>
-            <div className="set-table compact">
-              <div className="set-head"><span>Set</span><span>Target</span><span>Weight</span></div>
-              {exercise.sets.map((set, index) => (
-                <div className="set-row" key={set.id}>
-                  <strong>{index + 1}</strong>
-                  <input value={set.plannedReps} onChange={(event) => updateSet(exercise.id, set.id, { plannedReps: event.target.value })} placeholder="8-10" />
-                  <input value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lbs" />
-                </div>
-              ))}
-            </div>
-            <button className="text-button" onClick={() => addSet(exercise.id)}><Plus size={16} /> Add set</button>
+        {crossFit && (
+          <div className="button-row">
+            <button className="secondary-button" onClick={persistPlan}><Check size={17} /> Save plan</button>
+            <button className="primary-button" onClick={async () => startPlan(await persistPlan())}><Dumbbell size={18} /> Start</button>
           </div>
-        ))}
-        {!plannedExercises.length && <p className="empty">Search above to add exercises to the plan.</p>}
-        <div className="button-row">
-          <button className="secondary-button" onClick={persistPlan} disabled={!plannedExercises.length}><Check size={17} /> Save plan</button>
-          <button className="primary-button" disabled={!plannedExercises.length} onClick={async () => startPlan(await persistPlan())}><Dumbbell size={18} /> Start</button>
-        </div>
+        )}
       </section>
+
+      {!crossFit && (
+        <>
+          <section className="panel">
+            <div className="section-heading"><h2>Exercise database</h2><span>{exercises.length} exercises</span></div>
+            <ExerciseSearch exercises={exercises} onAdd={addExercise} />
+          </section>
+          <CustomExerciseForm onSave={saveCustomExercise} />
+
+          <section className="panel stack">
+            <div className="section-heading"><h2>Planned exercises</h2><span>{plannedExercises.length}</span></div>
+            {plannedExercises.map((exercise) => (
+              <div className="planned-exercise" key={exercise.id}>
+                <div className="planned-title">
+                  <span><strong>{exercise.exerciseName}</strong><small>{exercise.group}</small></span>
+                  <button className="icon-button subtle" onClick={() => removeExercise(exercise.id)} aria-label="Remove exercise"><X size={17} /></button>
+                </div>
+                <div className="set-table compact">
+                  <div className="set-head"><span>Set</span><span>Target</span><span>Weight</span></div>
+                  {exercise.sets.map((set, index) => (
+                    <div className="set-row" key={set.id}>
+                      <strong>{index + 1}</strong>
+                      <input value={set.plannedReps} onChange={(event) => updateSet(exercise.id, set.id, { plannedReps: event.target.value })} placeholder="8-10" />
+                      <input value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lbs" />
+                    </div>
+                  ))}
+                </div>
+                <button className="text-button" onClick={() => addSet(exercise.id)}><Plus size={16} /> Add set</button>
+              </div>
+            ))}
+            {!plannedExercises.length && <p className="empty">Search above to add exercises to the plan.</p>}
+            <div className="button-row">
+              <button className="secondary-button" onClick={persistPlan} disabled={!canSavePlan}><Check size={17} /> Save plan</button>
+              <button className="primary-button" disabled={!canSavePlan} onClick={async () => startPlan(await persistPlan())}><Dumbbell size={18} /> Start</button>
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 };
@@ -607,6 +660,8 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const [detailTabs, setDetailTabs] = useState({});
   const [swapFor, setSwapFor] = useState(null);
   const [addingExercise, setAddingExercise] = useState(false);
+  const crossFit = isCrossFitWorkout(session.workoutType || session.title);
+  const exerciseLogs = session.exerciseLogs || [];
 
   const patchLog = (logId, updater) => {
     updateSession({
@@ -702,13 +757,26 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
 
   return (
     <div className="screen">
-      <ScreenHeader icon={ListChecks} title="Active workout" subtitle="Check off each set as you go." />
-      <section className="panel workout-note">
+      <ScreenHeader icon={ListChecks} title="Active workout" subtitle={crossFit ? 'Log the class exactly as performed.' : 'Check off each set as you go.'} />
+      <section className="panel workout-note stack">
+        <div className="plan-text-grid">
+          <Field label="Warm up">
+            <textarea value={session.warmUp || ''} onChange={(event) => updateSession({ ...session, warmUp: event.target.value })} placeholder="Mobility, activation, or prep work" />
+          </Field>
+          <Field label="Cool down">
+            <textarea value={session.coolDown || ''} onChange={(event) => updateSession({ ...session, coolDown: event.target.value })} placeholder="Stretching, breathing, or recovery notes" />
+          </Field>
+        </div>
+        {crossFit && (
+          <Field label="Full CrossFit workout">
+            <textarea className="large-textarea" value={session.crossFitWorkout || ''} onChange={(event) => updateSession({ ...session, crossFitWorkout: event.target.value })} placeholder="Write the full class workout here" />
+          </Field>
+        )}
         <Field label="Workout notes">
           <textarea value={session.notes || ''} onChange={(event) => updateSession({ ...session, notes: event.target.value })} placeholder="How did the session feel?" />
         </Field>
       </section>
-      {session.exerciseLogs.map((log) => {
+      {!crossFit && exerciseLogs.map((log) => {
         const exercise = findExercise(exercises, log.exerciseId) || log;
         const tab = detailTabs[log.id] || 'how';
         return (
@@ -773,23 +841,25 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
           </section>
         );
       })}
-      <section className="panel active-add-panel">
-        <button className="section-toggle" onClick={() => setAddingExercise(!addingExercise)}>
-          <span><Plus size={18} /> Add exercise</span>
-          {addingExercise ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-        </button>
-        {addingExercise && (
-          <div className="stack active-add-body">
-            <ExerciseSearch exercises={exercises} compact onAdd={addExercise} />
-            <CustomExerciseForm
-              asPanel={false}
-              title="New custom exercise"
-              buttonLabel="Save and add"
-              onSave={saveAndAddCustomExercise}
-            />
-          </div>
-        )}
-      </section>
+      {!crossFit && (
+        <section className="panel active-add-panel">
+          <button className="section-toggle" onClick={() => setAddingExercise(!addingExercise)}>
+            <span><Plus size={18} /> Add exercise</span>
+            {addingExercise ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {addingExercise && (
+            <div className="stack active-add-body">
+              <ExerciseSearch exercises={exercises} compact onAdd={addExercise} />
+              <CustomExerciseForm
+                asPanel={false}
+                title="New custom exercise"
+                buttonLabel="Save and add"
+                onSave={saveAndAddCustomExercise}
+              />
+            </div>
+          )}
+        </section>
+      )}
       <div className="sticky-actions">
         <button className="ghost-button" onClick={clearActive}>Close</button>
         <button className="primary-button" onClick={() => finishSession({ ...session, status: 'completed', dateCompleted: new Date().toISOString() })}>
@@ -845,21 +915,28 @@ const HistoryView = ({ sessions, exportData }) => {
         <button className="secondary-button" onClick={exportData}><Download size={17} /> Download JSON</button>
       </section>
       <div className="stack">
-        {completed.map((session) => (
-          <section className="panel" key={session.id}>
-            <div className="section-heading">
-              <h2>{formatDate(session.dateCompleted || session.dateStarted)}</h2>
-              <span>{session.exerciseLogs?.length || 0} exercises</span>
-            </div>
-            {session.exerciseLogs?.map((log) => (
-              <div className="activity-row" key={log.id}>
-                <Dumbbell size={17} />
-                <span><strong>{log.exerciseName}</strong><small>{log.sets.map(performedSetSummary).filter(Boolean).join(' / ') || 'No completed sets'}</small></span>
+        {completed.map((session) => {
+          const crossFit = isCrossFitWorkout(session.workoutType || session.title);
+          return (
+            <section className="panel" key={session.id}>
+              <div className="section-heading">
+                <h2>{formatDate(session.dateCompleted || session.dateStarted)}</h2>
+                <span>{crossFit ? 'CrossFit log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</span>
               </div>
-            ))}
-            {session.notes && <p className="note-copy">{session.notes}</p>}
-          </section>
-        ))}
+              <p className="workout-type-label">{session.workoutType || 'Workout'}</p>
+              {session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
+              {crossFit && session.crossFitWorkout && <p className="note-copy"><strong>Full CrossFit workout</strong><br />{session.crossFitWorkout}</p>}
+              {!crossFit && session.exerciseLogs?.map((log) => (
+                <div className="activity-row" key={log.id}>
+                  <Dumbbell size={17} />
+                  <span><strong>{log.exerciseName}</strong><small>{log.sets.map(performedSetSummary).filter(Boolean).join(' / ') || 'No completed sets'}</small></span>
+                </div>
+              ))}
+              {session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
+              {session.notes && <p className="note-copy"><strong>Notes</strong><br />{session.notes}</p>}
+            </section>
+          );
+        })}
         {!completed.length && <p className="empty page-empty">No completed workouts yet.</p>}
       </div>
     </div>
