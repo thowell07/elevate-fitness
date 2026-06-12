@@ -25,7 +25,7 @@ import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { allowedEmails, isAllowedEmail, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
-import { DEFAULT_WORKOUT_TYPE, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
+import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
   customExercises: [],
@@ -181,7 +181,12 @@ const performedSetSummary = (set) => (set.completed ? setSummary(set, false) : '
 const createSessionFromPlan = (plan, sessions) => {
   const workoutType = normalizeWorkoutType(plan.workoutType || plan.title);
   const freeform = isFreeformWorkout(workoutType);
-  const workoutDescription = plan.workoutDescription || plan.crossFitWorkout || '';
+  const crossFit = isCrossFitWorkout(workoutType);
+  const strength = plan.strength || '';
+  const wod = plan.wod || (crossFit ? plan.workoutDescription || plan.crossFitWorkout || '' : '');
+  const workoutDescription = crossFit
+    ? formatCrossFitWorkoutDescription(strength, wod)
+    : plan.workoutDescription || plan.crossFitWorkout || '';
   return {
     id: uid('session'),
     plannedWorkoutId: plan.id,
@@ -192,6 +197,8 @@ const createSessionFromPlan = (plan, sessions) => {
     workoutType,
     warmUp: plan.warmUp || '',
     coolDown: plan.coolDown || '',
+    strength,
+    wod,
     workoutDescription,
     crossFitWorkout: workoutDescription,
     notes: plan.notes || '',
@@ -520,6 +527,9 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
   const [workoutType, setWorkoutType] = useState(normalizeWorkoutType(existingPlan?.workoutType || existingPlan?.title || DEFAULT_WORKOUT_TYPE));
   const [warmUp, setWarmUp] = useState(existingPlan?.warmUp || '');
   const [coolDown, setCoolDown] = useState(existingPlan?.coolDown || '');
+  const existingIsCrossFit = isCrossFitWorkout(existingPlan?.workoutType || existingPlan?.title);
+  const [strength, setStrength] = useState(existingPlan?.strength || '');
+  const [wod, setWod] = useState(existingPlan?.wod || (existingIsCrossFit ? existingPlan?.workoutDescription || existingPlan?.crossFitWorkout || '' : ''));
   const [workoutDescription, setWorkoutDescription] = useState(existingPlan?.workoutDescription || existingPlan?.crossFitWorkout || '');
   const [notes, setNotes] = useState(existingPlan?.notes || '');
   const [plannedExercises, setPlannedExercises] = useState(existingPlan?.exercises || []);
@@ -529,13 +539,17 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
     setWorkoutType(normalizeWorkoutType(plan?.workoutType || plan?.title || DEFAULT_WORKOUT_TYPE));
     setWarmUp(plan?.warmUp || '');
     setCoolDown(plan?.coolDown || '');
+    const planIsCrossFit = isCrossFitWorkout(plan?.workoutType || plan?.title);
+    setStrength(plan?.strength || '');
+    setWod(plan?.wod || (planIsCrossFit ? plan?.workoutDescription || plan?.crossFitWorkout || '' : ''));
     setWorkoutDescription(plan?.workoutDescription || plan?.crossFitWorkout || '');
     setNotes(plan?.notes || '');
     setPlannedExercises(plan?.exercises || []);
   }, [date, data.plannedWorkouts]);
 
   const freeform = isFreeformWorkout(workoutType);
-  const fullWorkoutLabel = isCrossFitWorkout(workoutType) ? 'Full CrossFit workout' : 'Full workout';
+  const crossFit = isCrossFitWorkout(workoutType);
+  const plannedWorkoutDescription = crossFit ? formatCrossFitWorkoutDescription(strength, wod) : workoutDescription;
 
   const addExercise = (exercise) => setPlannedExercises((items) => [...items, createPlanExercise(exercise, items.length + 1)]);
   const updateSet = (exerciseId, setId, patch) => {
@@ -565,8 +579,10 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       workoutType,
       warmUp,
       coolDown,
-      workoutDescription,
-      crossFitWorkout: workoutDescription,
+      strength,
+      wod,
+      workoutDescription: plannedWorkoutDescription,
+      crossFitWorkout: plannedWorkoutDescription,
       notes,
       status: 'planned',
       exercises: freeform ? [] : plannedExercises.map((exercise, index) => ({ ...exercise, position: index + 1 })),
@@ -597,8 +613,18 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
             <textarea value={coolDown} onChange={(event) => setCoolDown(event.target.value)} placeholder="Stretching, breathing, or recovery notes" />
           </Field>
         </div>
-        {freeform && (
-          <Field label={fullWorkoutLabel}>
+        {crossFit && (
+          <div className="plan-text-grid">
+            <Field label="Strength">
+              <textarea value={strength} onChange={(event) => setStrength(event.target.value)} placeholder="Strength portion" />
+            </Field>
+            <Field label="WOD">
+              <textarea value={wod} onChange={(event) => setWod(event.target.value)} placeholder="Workout of the day" />
+            </Field>
+          </div>
+        )}
+        {freeform && !crossFit && (
+          <Field label="Full workout">
             <textarea className="large-textarea" value={workoutDescription} onChange={(event) => setWorkoutDescription(event.target.value)} placeholder="Write the full workout here" />
           </Field>
         )}
@@ -665,8 +691,10 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const [swapFor, setSwapFor] = useState(null);
   const [addingExercise, setAddingExercise] = useState(false);
   const freeform = isFreeformWorkout(session.workoutType || session.title);
-  const fullWorkoutLabel = isCrossFitWorkout(session.workoutType || session.title) ? 'Full CrossFit workout' : 'Full workout';
+  const crossFit = isCrossFitWorkout(session.workoutType || session.title);
   const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
+  const strength = session.strength || '';
+  const wod = session.wod || (crossFit ? workoutDescription : '');
   const exerciseLogs = session.exerciseLogs || [];
 
   const patchLog = (logId, updater) => {
@@ -773,8 +801,24 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
             <textarea value={session.coolDown || ''} onChange={(event) => updateSession({ ...session, coolDown: event.target.value })} placeholder="Stretching, breathing, or recovery notes" />
           </Field>
         </div>
-        {freeform && (
-          <Field label={fullWorkoutLabel}>
+        {crossFit && (
+          <div className="plan-text-grid">
+            <Field label="Strength">
+              <textarea value={strength} onChange={(event) => {
+                const nextDescription = formatCrossFitWorkoutDescription(event.target.value, wod);
+                updateSession({ ...session, strength: event.target.value, workoutDescription: nextDescription, crossFitWorkout: nextDescription });
+              }} placeholder="Strength portion" />
+            </Field>
+            <Field label="WOD">
+              <textarea value={wod} onChange={(event) => {
+                const nextDescription = formatCrossFitWorkoutDescription(strength, event.target.value);
+                updateSession({ ...session, wod: event.target.value, workoutDescription: nextDescription, crossFitWorkout: nextDescription });
+              }} placeholder="Workout of the day" />
+            </Field>
+          </div>
+        )}
+        {freeform && !crossFit && (
+          <Field label="Full workout">
             <textarea className="large-textarea" value={workoutDescription} onChange={(event) => updateSession({ ...session, workoutDescription: event.target.value, crossFitWorkout: event.target.value })} placeholder="Write the full workout here" />
           </Field>
         )}
@@ -923,8 +967,10 @@ const HistoryView = ({ sessions, exportData }) => {
       <div className="stack">
         {completed.map((session) => {
           const freeform = isFreeformWorkout(session.workoutType || session.title);
-          const fullWorkoutLabel = isCrossFitWorkout(session.workoutType || session.title) ? 'Full CrossFit workout' : 'Full workout';
+          const crossFit = isCrossFitWorkout(session.workoutType || session.title);
           const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
+          const strength = session.strength || '';
+          const wod = session.wod || (crossFit ? workoutDescription : '');
           return (
             <section className="panel" key={session.id}>
               <div className="section-heading">
@@ -933,7 +979,9 @@ const HistoryView = ({ sessions, exportData }) => {
               </div>
               <p className="workout-type-label">{session.workoutType || 'Workout'}</p>
               {session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
-              {freeform && workoutDescription && <p className="note-copy"><strong>{fullWorkoutLabel}</strong><br />{workoutDescription}</p>}
+              {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
+              {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
+              {freeform && !crossFit && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
               {!freeform && session.exerciseLogs?.map((log) => (
                 <div className="activity-row" key={log.id}>
                   <Dumbbell size={17} />

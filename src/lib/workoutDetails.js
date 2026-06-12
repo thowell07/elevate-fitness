@@ -18,23 +18,39 @@ const LEGACY_WORKOUT_TYPE_MAP = {
   'Lifetime Gym and At Home Workout': AT_HOME_WORKOUT_TYPE,
 };
 
-export const isCrossFitWorkout = (workoutType) => normalizeWorkoutType(workoutType) === CROSSFIT_WORKOUT_TYPE;
-
 export const normalizeWorkoutType = (value) => {
   if (WORKOUT_TYPE_OPTIONS.includes(value)) return value;
   return LEGACY_WORKOUT_TYPE_MAP[value] || DEFAULT_WORKOUT_TYPE;
 };
 
+export const isCrossFitWorkout = (workoutType) => normalizeWorkoutType(workoutType) === CROSSFIT_WORKOUT_TYPE;
+
 export const isFreeformWorkout = (workoutType) => FREEFORM_WORKOUT_TYPES.has(normalizeWorkoutType(workoutType));
 
+export const formatCrossFitWorkoutDescription = (strength = '', wod = '') =>
+  [
+    strength ? 'Strength:\n' + strength : '',
+    wod ? 'WOD:\n' + wod : '',
+  ].filter(Boolean).join('\n\n');
+
 export const createWorkoutDetails = (source = {}) => {
-  const workoutDescription = source.workoutDescription || source.crossFitWorkout || source.fullCrossFitWorkout || '';
+  const workoutType = normalizeWorkoutType(source.workoutType || source.title);
+  const rawWorkoutDescription = source.workoutDescription || source.crossFitWorkout || source.fullCrossFitWorkout || '';
+  const strength = source.strength || source.crossFitStrength || '';
+  const wod = source.wod || source.crossFitWod || (workoutType === CROSSFIT_WORKOUT_TYPE ? rawWorkoutDescription : '');
+  const crossFitDescription = formatCrossFitWorkoutDescription(strength, wod);
+  const workoutDescription = workoutType === CROSSFIT_WORKOUT_TYPE
+    ? crossFitDescription || rawWorkoutDescription
+    : rawWorkoutDescription;
+
   return {
     kind: WORKOUT_DETAILS_KIND,
     id: WORKOUT_DETAILS_ID,
-    workoutType: normalizeWorkoutType(source.workoutType || source.title),
+    workoutType,
     warmUp: source.warmUp || '',
     coolDown: source.coolDown || '',
+    strength,
+    wod,
     workoutDescription,
     crossFitWorkout: workoutDescription,
   };
