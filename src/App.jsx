@@ -195,8 +195,8 @@ const createSessionFromPlan = (plan, sessions) => {
     status: 'active',
     title: workoutType,
     workoutType,
-    warmUp: plan.warmUp || '',
-    coolDown: plan.coolDown || '',
+    warmUp: freeform ? '' : plan.warmUp || '',
+    coolDown: freeform ? '' : plan.coolDown || '',
     strength,
     wod,
     workoutDescription,
@@ -577,8 +577,8 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       date,
       title: workoutType,
       workoutType,
-      warmUp,
-      coolDown,
+      warmUp: freeform ? '' : warmUp,
+      coolDown: freeform ? '' : coolDown,
       strength,
       wod,
       workoutDescription: plannedWorkoutDescription,
@@ -605,14 +605,16 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
             </select>
           </Field>
         </div>
-        <div className="plan-text-grid">
-          <Field label="Warm up">
-            <textarea value={warmUp} onChange={(event) => setWarmUp(event.target.value)} placeholder="Mobility, activation, or prep work" />
-          </Field>
-          <Field label="Cool down">
-            <textarea value={coolDown} onChange={(event) => setCoolDown(event.target.value)} placeholder="Stretching, breathing, or recovery notes" />
-          </Field>
-        </div>
+        {!freeform && (
+          <div className="plan-text-grid">
+            <Field label="Warm up">
+              <textarea value={warmUp} onChange={(event) => setWarmUp(event.target.value)} placeholder="Mobility, activation, or prep work" />
+            </Field>
+            <Field label="Cool down">
+              <textarea value={coolDown} onChange={(event) => setCoolDown(event.target.value)} placeholder="Stretching, breathing, or recovery notes" />
+            </Field>
+          </div>
+        )}
         {crossFit && (
           <div className="plan-text-grid">
             <Field label="Strength">
@@ -793,14 +795,16 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
     <div className="screen">
       <ScreenHeader icon={ListChecks} title="Active workout" subtitle={freeform ? 'Log the full workout exactly as performed.' : 'Check off each set as you go.'} />
       <section className="panel workout-note stack">
-        <div className="plan-text-grid">
-          <Field label="Warm up">
-            <textarea value={session.warmUp || ''} onChange={(event) => updateSession({ ...session, warmUp: event.target.value })} placeholder="Mobility, activation, or prep work" />
-          </Field>
-          <Field label="Cool down">
-            <textarea value={session.coolDown || ''} onChange={(event) => updateSession({ ...session, coolDown: event.target.value })} placeholder="Stretching, breathing, or recovery notes" />
-          </Field>
-        </div>
+        {!freeform && (
+          <div className="plan-text-grid">
+            <Field label="Warm up">
+              <textarea value={session.warmUp || ''} onChange={(event) => updateSession({ ...session, warmUp: event.target.value })} placeholder="Mobility, activation, or prep work" />
+            </Field>
+            <Field label="Cool down">
+              <textarea value={session.coolDown || ''} onChange={(event) => updateSession({ ...session, coolDown: event.target.value })} placeholder="Stretching, breathing, or recovery notes" />
+            </Field>
+          </div>
+        )}
         {crossFit && (
           <div className="plan-text-grid">
             <Field label="Strength">
@@ -978,7 +982,7 @@ const HistoryView = ({ sessions, exportData }) => {
                 <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</span>
               </div>
               <p className="workout-type-label">{session.workoutType || 'Workout'}</p>
-              {session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
+              {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
               {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
               {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
               {freeform && !crossFit && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
@@ -988,7 +992,7 @@ const HistoryView = ({ sessions, exportData }) => {
                   <span><strong>{log.exerciseName}</strong><small>{log.sets.map(performedSetSummary).filter(Boolean).join(' / ') || 'No completed sets'}</small></span>
                 </div>
               ))}
-              {session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
+              {!freeform && session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
               {session.notes && <p className="note-copy"><strong>Notes</strong><br />{session.notes}</p>}
             </section>
           );
