@@ -33,11 +33,50 @@ export const formatCrossFitWorkoutDescription = (strength = '', wod = '') =>
     wod ? 'WOD:\n' + wod : '',
   ].filter(Boolean).join('\n\n');
 
+const cleanText = (value = '') => String(value || '').replace(/\r\n/g, '\n').trim();
+const compareText = (value = '') => cleanText(value).replace(/\s+/g, ' ').toLowerCase();
+
+export const parseCrossFitWorkoutDescription = (value = '') => {
+  const sections = { strength: [], wod: [] };
+  let current = '';
+
+  for (const line of cleanText(value).split('\n')) {
+    const match = line.match(/^\s*(Strength|WOD):\s*(.*)$/i);
+    if (match) {
+      current = match[1].toLowerCase() === 'strength' ? 'strength' : 'wod';
+      if (match[2]) sections[current].push(match[2]);
+      continue;
+    }
+    if (current) sections[current].push(line);
+  }
+
+  return {
+    strength: cleanText(sections.strength.join('\n')),
+    wod: cleanText(sections.wod.join('\n')),
+  };
+};
+
+export const isStrengthOnlyCrossFitWod = (wod = '', strength = '') => {
+  const parsed = parseCrossFitWorkoutDescription(wod);
+  if (!parsed.strength || parsed.wod) return false;
+  if (!strength) return true;
+  return compareText(parsed.strength) === compareText(strength);
+};
+
+export const sanitizeCrossFitWod = (wod = '', strength = '') =>
+  isStrengthOnlyCrossFitWod(wod, strength) ? '' : cleanText(wod);
+
 export const createWorkoutDetails = (source = {}) => {
   const workoutType = normalizeWorkoutType(source.workoutType || source.title);
   const rawWorkoutDescription = source.workoutDescription || source.crossFitWorkout || source.fullCrossFitWorkout || '';
-  const strength = source.strength || source.crossFitStrength || '';
-  const wod = source.wod || source.crossFitWod || (workoutType === CROSSFIT_WORKOUT_TYPE ? rawWorkoutDescription : '');
+  const parsedCrossFitDescription = workoutType === CROSSFIT_WORKOUT_TYPE
+    ? parseCrossFitWorkoutDescription(rawWorkoutDescription)
+    : { strength: '', wod: '' };
+  const strength = cleanText(source.strength || source.crossFitStrength || parsedCrossFitDescription.strength || '');
+  const directWod = source.wod || source.crossFitWod || '';
+  const wod = sanitizeCrossFitWod(directWod, strength)
+    || parsedCrossFitDescription.wod
+    || (workoutType === CROSSFIT_WORKOUT_TYPE && !strength ? cleanText(rawWorkoutDescription) : '');
   const crossFitDescription = formatCrossFitWorkoutDescription(strength, wod);
   const workoutDescription = workoutType === CROSSFIT_WORKOUT_TYPE
     ? crossFitDescription || rawWorkoutDescription

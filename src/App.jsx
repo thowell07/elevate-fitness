@@ -25,7 +25,7 @@ import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { allowedEmails, isAllowedEmail, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
-import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
+import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
   customExercises: [],
@@ -188,12 +188,29 @@ const completionTimestampForSession = (session) => {
 const sortSessionsByWorkoutDateDesc = (sessions = []) =>
   [...sessions].sort((a, b) => String(b.dateCompleted || b.dateStarted).localeCompare(String(a.dateCompleted || a.dateStarted)));
 
+const crossFitWodValue = (source = {}) => {
+  const strength = source.strength || '';
+  const fallback = !strength ? source.workoutDescription || source.crossFitWorkout || '' : '';
+  return sanitizeCrossFitWod(source.wod || fallback, strength);
+};
+
+const historyCrossFitText = (session = {}) => {
+  const strength = session.strength || '';
+  const wod = sanitizeCrossFitWod(session.wod || '', strength);
+  const wodWasStrength = Boolean(session.wod) && !wod;
+  return {
+    strength,
+    wod: wod || (wodWasStrength ? session.notes || '' : ''),
+    notes: wodWasStrength ? '' : session.notes || '',
+  };
+};
+
 const createSessionFromPlan = (plan, sessions) => {
   const workoutType = normalizeWorkoutType(plan.workoutType || plan.title);
   const freeform = isFreeformWorkout(workoutType);
   const crossFit = isCrossFitWorkout(workoutType);
   const strength = plan.strength || '';
-  const wod = plan.wod || (crossFit ? plan.workoutDescription || plan.crossFitWorkout || '' : '');
+  const wod = crossFit ? crossFitWodValue(plan) : '';
   const workoutDescription = crossFit
     ? formatCrossFitWorkoutDescription(strength, wod)
     : plan.workoutDescription || plan.crossFitWorkout || '';
@@ -539,7 +556,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
   const [coolDown, setCoolDown] = useState(existingPlan?.coolDown || '');
   const existingIsCrossFit = isCrossFitWorkout(existingPlan?.workoutType || existingPlan?.title);
   const [strength, setStrength] = useState(existingPlan?.strength || '');
-  const [wod, setWod] = useState(existingPlan?.wod || (existingIsCrossFit ? existingPlan?.workoutDescription || existingPlan?.crossFitWorkout || '' : ''));
+  const [wod, setWod] = useState(existingIsCrossFit ? crossFitWodValue(existingPlan) : '');
   const [workoutDescription, setWorkoutDescription] = useState(existingPlan?.workoutDescription || existingPlan?.crossFitWorkout || '');
   const [notes, setNotes] = useState(existingPlan?.notes || '');
   const [plannedExercises, setPlannedExercises] = useState(existingPlan?.exercises || []);
@@ -551,7 +568,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
     setCoolDown(plan?.coolDown || '');
     const planIsCrossFit = isCrossFitWorkout(plan?.workoutType || plan?.title);
     setStrength(plan?.strength || '');
-    setWod(plan?.wod || (planIsCrossFit ? plan?.workoutDescription || plan?.crossFitWorkout || '' : ''));
+    setWod(planIsCrossFit ? crossFitWodValue(plan) : '');
     setWorkoutDescription(plan?.workoutDescription || plan?.crossFitWorkout || '');
     setNotes(plan?.notes || '');
     setPlannedExercises(plan?.exercises || []);
@@ -706,7 +723,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const crossFit = isCrossFitWorkout(session.workoutType || session.title);
   const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
   const strength = session.strength || '';
-  const wod = session.wod || (crossFit ? workoutDescription : '');
+  const wod = crossFit ? crossFitWodValue(session) : '';
   const exerciseLogs = session.exerciseLogs || [];
 
   const patchLog = (logId, updater) => {
@@ -983,8 +1000,7 @@ const HistoryView = ({ sessions, exportData, deleteSession }) => {
           const freeform = isFreeformWorkout(session.workoutType || session.title);
           const crossFit = isCrossFitWorkout(session.workoutType || session.title);
           const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
-          const strength = session.strength || '';
-          const wod = session.wod || (crossFit ? workoutDescription : '');
+          const { strength, wod, notes } = crossFit ? historyCrossFitText(session) : { strength: '', wod: '', notes: session.notes || '' };
           return (
             <section className="panel" key={session.id}>
               <div className="section-heading">
@@ -1008,7 +1024,7 @@ const HistoryView = ({ sessions, exportData, deleteSession }) => {
                 </div>
               ))}
               {!freeform && session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
-              {session.notes && <p className="note-copy"><strong>Notes</strong><br />{session.notes}</p>}
+              {notes && <p className="note-copy"><strong>Notes</strong><br />{notes}</p>}
             </section>
           );
         })}
