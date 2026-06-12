@@ -150,6 +150,10 @@ export const createSupabaseStore = () => ({
     });
     if (error) throw error;
   },
+  async deleteSession(userId, sessionId) {
+    const { error } = await supabase.from('workout_sessions').delete().eq('id', sessionId).eq('user_id', userId);
+    if (error) throw error;
+  },
   async saveExerciseNote(userId, exerciseId, note) {
     const { error } = await supabase.from('exercise_notes').upsert({
       id: `${userId}-${exerciseId}`,
@@ -239,6 +243,9 @@ export const createPreviewStore = () => {
     },
     async saveSession(_userId, session) {
       persist({ workoutSessions: [session, ...bundle.workoutSessions.filter((item) => item.id !== session.id)] });
+    },
+    async deleteSession(_userId, sessionId) {
+      persist({ workoutSessions: bundle.workoutSessions.filter((item) => item.id !== sessionId) });
     },
     async saveExerciseNote(_userId, exerciseId, note) {
       persist({ exerciseNotes: { ...bundle.exerciseNotes, [exerciseId]: note } });

@@ -356,6 +356,19 @@ small { color: #64748b; line-height: 1.35; }
 }
 .history-export-panel span { display: grid; gap: 3px; }
 .history-export-panel .secondary-button { min-width: 144px; }
+.history-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.section-heading .history-card-actions span { color: #2563eb; }
+.section-heading .history-delete-button {
+  min-height: 32px;
+  color: #dc2626;
+  font-size: 12px;
+}
 .metric-chart-panel { display: grid; gap: 12px; }
 .metric-toggle-row {
   display: grid;

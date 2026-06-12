@@ -178,6 +178,16 @@ const setSummary = (set, fallbackToPlan = true) => {
 
 const performedSetSummary = (set) => (set.completed ? setSummary(set, false) : '');
 
+const sessionTimestampForDate = (date) => new Date(`${date || todayISO()}T12:00:00`).toISOString();
+
+const completionTimestampForSession = (session) => {
+  const sessionDate = String(session.dateStarted || '').slice(0, 10);
+  return sessionDate && sessionDate !== todayISO() ? session.dateStarted : new Date().toISOString();
+};
+
+const sortSessionsByWorkoutDateDesc = (sessions = []) =>
+  [...sessions].sort((a, b) => String(b.dateCompleted || b.dateStarted).localeCompare(String(a.dateCompleted || a.dateStarted)));
+
 const createSessionFromPlan = (plan, sessions) => {
   const workoutType = normalizeWorkoutType(plan.workoutType || plan.title);
   const freeform = isFreeformWorkout(workoutType);
@@ -190,7 +200,7 @@ const createSessionFromPlan = (plan, sessions) => {
   return {
     id: uid('session'),
     plannedWorkoutId: plan.id,
-    dateStarted: new Date().toISOString(),
+    dateStarted: sessionTimestampForDate(plan.date),
     dateCompleted: null,
     status: 'active',
     title: workoutType,
@@ -496,7 +506,7 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
           <h2>Recent activity</h2>
           <button onClick={() => setActiveTab('history')}>View all</button>
         </div>
-        {data.workoutSessions.filter((session) => session.status === 'completed').slice(0, 3).map((session) => (
+        {sortSessionsByWorkoutDateDesc(data.workoutSessions.filter((session) => session.status === 'completed')).slice(0, 3).map((session) => (
           <div className="activity-row" key={session.id}>
             <Dumbbell size={18} />
             <span>
@@ -916,7 +926,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
       )}
       <div className="sticky-actions">
         <button className="ghost-button" onClick={clearActive}>Close</button>
-        <button className="primary-button" onClick={() => finishSession({ ...session, status: 'completed', dateCompleted: new Date().toISOString() })}>
+        <button className="primary-button" onClick={() => finishSession({ ...session, status: 'completed', dateCompleted: completionTimestampForSession(session) })}>
           <CheckCircle2 size={18} /> Finish workout
         </button>
       </div>
@@ -956,8 +966,8 @@ const ExerciseHistory = ({ sessions, exerciseId }) => {
   );
 };
 
-const HistoryView = ({ sessions, exportData }) => {
-  const completed = sessions.filter((session) => session.status === 'completed');
+const HistoryView = ({ sessions, exportData, deleteSession }) => {
+  const completed = sortSessionsByWorkoutDateDesc(sessions.filter((session) => session.status === 'completed'));
   return (
     <div className="screen">
       <ScreenHeader icon={History} title="History" subtitle="Completed sessions and workout notes." />
@@ -979,7 +989,12 @@ const HistoryView = ({ sessions, exportData }) => {
             <section className="panel" key={session.id}>
               <div className="section-heading">
                 <h2>{formatDate(session.dateCompleted || session.dateStarted)}</h2>
-                <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</span>
+                <div className="history-card-actions">
+                  <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</span>
+                  <button className="text-button danger history-delete-button" onClick={() => deleteSession(session)}>
+                    <Trash2 size={16} /> Delete
+                  </button>
+                </div>
               </div>
               <p className="workout-type-label">{session.workoutType || 'Workout'}</p>
               {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
@@ -1312,6 +1327,27 @@ export default function App() {
     setActiveTab('history');
   };
 
+  const deleteWorkoutSession = async (workoutSession) => {
+    const workoutDate = formatDate(workoutSession.dateCompleted || workoutSession.dateStarted);
+    if (!window.confirm(`Delete the ${workoutDate} workout from history? This cannot be undone.`)) return;
+    const linkedPlan = data.plannedWorkouts.find((item) => item.id === workoutSession.plannedWorkoutId);
+    const restoredPlan = linkedPlan?.status === 'completed' ? { ...linkedPlan, status: 'planned' } : null;
+    const nextPlannedWorkouts = restoredPlan
+      ? [restoredPlan, ...data.plannedWorkouts.filter((item) => item.id !== restoredPlan.id)].sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      : data.plannedWorkouts;
+    await saveData(
+      async () => {
+        await store.deleteSession(userId, workoutSession.id);
+        if (restoredPlan) await store.savePlannedWorkout(userId, restoredPlan);
+      },
+      {
+        workoutSessions: data.workoutSessions.filter((item) => item.id !== workoutSession.id),
+        plannedWorkouts: nextPlannedWorkouts,
+      }
+    );
+    if (session?.id === workoutSession.id) setSession(null);
+  };
+
   const saveExerciseNote = (exerciseId, note) =>
     saveData(() => store.saveExerciseNote(userId, exerciseId, note), {
       exerciseNotes: { ...data.exerciseNotes, [exerciseId]: note },
@@ -1412,7 +1448,7 @@ export default function App() {
             clearActive={() => setActiveTab('home')}
           />
         )}
-        {activeTab === 'history' && <HistoryView sessions={data.workoutSessions} exportData={exportData} />}
+        {activeTab === 'history' && <HistoryView sessions={data.workoutSessions} exportData={exportData} deleteSession={deleteWorkoutSession} />}
         {activeTab === 'habits' && <HabitTracker habitLogs={data.habitLogs} saveHabitLog={saveHabitLog} />}
         {activeTab === 'metrics' && <MetricsView scans={data.metricScans} saveMetricScan={saveMetricScan} />}
       </main>
