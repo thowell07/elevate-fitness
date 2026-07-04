@@ -177,13 +177,17 @@ export const createSupabaseStore = () => ({
     if (error) throw error;
   },
   async saveHabitLog(userId, log) {
-    const { error } = await supabase.from('habit_logs').upsert({
-      id: log.id,
-      user_id: userId,
-      date: log.date,
-      habit_id: log.habitId,
-      completed: log.completed,
-    });
+    const { error } = await supabase.from('habit_logs').upsert(
+      {
+        id: log.id,
+        user_id: userId,
+        date: log.date,
+        habit_id: log.habitId,
+        completed: log.completed,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,date,habit_id' }
+    );
     if (error) throw error;
   },
 });

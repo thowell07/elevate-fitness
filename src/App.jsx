@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import BarChart3 from 'lucide-react/dist/esm/icons/bar-chart-3.js';
 import BookOpen from 'lucide-react/dist/esm/icons/book-open.js';
 import CalendarPlus from 'lucide-react/dist/esm/icons/calendar-plus.js';
@@ -22,7 +22,7 @@ import Trash2 from 'lucide-react/dist/esm/icons/trash-2.js';
 import X from 'lucide-react/dist/esm/icons/x.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
-import { allowedEmails, isAllowedEmail, isSupabaseConfigured, supabase } from './lib/supabase';
+import { allowedEmails, isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
 import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
@@ -1247,10 +1247,25 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [legacySummary, setLegacySummary] = useState({ workouts: 0, habitDays: 0, metrics: 0 });
+  const [authEpoch, setAuthEpoch] = useState(0);
+  const hasLoadedRef = useRef(false);
 
   const store = useMemo(() => (preview ? createPreviewStore() : createSupabaseStore()), [preview]);
   const userId = preview ? 'preview-user' : user?.id;
   const exercises = useMemo(() => getAllExercises(data.customExercises), [data.customExercises]);
+
+  // If a request fails because the stored access token went stale (common when the
+  // installed PWA wakes from a long background), refresh the session and retry once.
+  const runWithAuthRetry = async (action) => {
+    try {
+      return await action();
+    } catch (requestError) {
+      if (preview || !isAuthTokenError(requestError)) throw requestError;
+      const { error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) throw requestError;
+      return action();
+    }
+  };
 
   useEffect(() => {
     setLegacySummary(getLegacySummary());
@@ -1268,8 +1283,13 @@ export default function App() {
       setUser(authData.session?.user || null);
       setLoading(false);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, authSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, authSession) => {
       setUser(authSession?.user || null);
+      if (event === 'TOKEN_REFRESHED') setAuthEpoch((epoch) => epoch + 1);
+      if (event === 'SIGNED_OUT') {
+        hasLoadedRef.current = false;
+        setData(emptyData);
+      }
     });
     return () => {
       mounted = false;
@@ -1279,13 +1299,26 @@ export default function App() {
 
   useEffect(() => {
     if (!userId) return;
-    setLoading(true);
-    store
-      .loadBundle(userId)
-      .then((bundle) => setData(bundle))
-      .catch((loadError) => setError(loadError.message || 'Could not load Elevate data.'))
-      .finally(() => setLoading(false));
-  }, [store, userId]);
+    let cancelled = false;
+    // Only block the UI on the first load; token-refresh reloads happen silently.
+    if (!hasLoadedRef.current) setLoading(true);
+    runWithAuthRetry(() => store.loadBundle(userId))
+      .then((bundle) => {
+        if (cancelled) return;
+        hasLoadedRef.current = true;
+        setData(bundle);
+        setError('');
+      })
+      .catch((loadError) => {
+        if (!cancelled) setError(loadError.message || 'Could not load Elevate data.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [store, userId, authEpoch]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
@@ -1295,11 +1328,15 @@ export default function App() {
     setError('');
     setData((current) => ({ ...current, ...nextData }));
     try {
-      await action();
+      await runWithAuthRetry(action);
     } catch (saveError) {
       setError(saveError.message || 'Save failed.');
-      const fresh = await store.loadBundle(userId);
-      setData(fresh);
+      try {
+        const fresh = await runWithAuthRetry(() => store.loadBundle(userId));
+        setData(fresh);
+      } catch {
+        // Keep the optimistic state on screen; the error banner already explains the failure.
+      }
     }
   };
 
@@ -1321,7 +1358,7 @@ export default function App() {
       workoutSessions: [nextSession, ...current.workoutSessions.filter((item) => item.id !== nextSession.id)],
     }));
     try {
-      await store.saveSession(userId, nextSession);
+      await runWithAuthRetry(() => store.saveSession(userId, nextSession));
     } catch (saveError) {
       setError(saveError.message || 'Could not save active workout.');
     }

@@ -1,4 +1,8 @@
-export const todayISO = () => new Date().toISOString().slice(0, 10);
+export const todayISO = () => {
+  // Local calendar date, not UTC — toISOString() alone flips to "tomorrow" at 8pm ET.
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
 
 export const uid = (prefix = 'id') => {
   if (crypto?.randomUUID) return `${prefix}-${crypto.randomUUID()}`;

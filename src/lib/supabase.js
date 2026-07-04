@@ -19,6 +19,11 @@ export const supabase = isSupabaseConfigured
     })
   : null;
 
+export const isAuthTokenError = (error) =>
+  /jwt|expired|invalid token|refresh_token|not authenticated|unauthorized|401/i.test(
+    String(error?.message || error?.code || '')
+  );
+
 export const isAllowedEmail = (email) => {
   if (!allowedEmails.length) return true;
   return allowedEmails.includes((email || '').toLowerCase());
