@@ -160,9 +160,11 @@ export const presetExercises = [
 
 export const defaultHabits = [
   { id: 'sleep', name: '7 Hours Sleep' },
+  { id: 'creatine', name: 'Creatine - 5 g' },
   { id: 'meditation', name: 'Meditation' },
   { id: 'water', name: '3L Water' },
   { id: 'protein', name: 'Protein Goal' },
+  { id: 'steps', name: '8k+ Steps - 10k Target' },
   { id: 'mobility', name: 'Stretch / Mobility' },
   { id: 'special-time-dalton', name: 'Special Time - Dalton' }
 ];
