@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import BarChart3 from 'lucide-react/dist/esm/icons/bar-chart-3.js';
 import BookOpen from 'lucide-react/dist/esm/icons/book-open.js';
 import CalendarPlus from 'lucide-react/dist/esm/icons/calendar-plus.js';
@@ -23,12 +23,12 @@ import X from 'lucide-react/dist/esm/icons/x.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { createOfflineStore } from './lib/offlineStore';
-import { completedSetCount, isRoutine, makeRestTimer, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
+import { completedSetCount, isRoutine, makeRestTimer, nextSet, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
 import RestTimer from './components/RestTimer';
 import PullUpProgress from './components/PullUpProgress';
 import { isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
-import { downloadJSON, formatDate, formatShortDate, normalizeSet, todayISO, uid } from './lib/utils';
+import { addDays, downloadJSON, formatDate, formatShortDate, localDateKey, normalizeSet, todayISO, uid } from './lib/utils';
 import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
@@ -48,18 +48,30 @@ const navItems = [
   { id: 'metrics', label: 'InBody', icon: BarChart3 },
 ];
 
-const Logo = ({ compact = false }) => (
-  <div className={`logo ${compact ? 'logo-compact' : ''}`}>
-    <div className="logo-mark">
-      <span />
-      <span />
-      <strong>T</strong>
-      <span />
-      <span />
-      <i />
-    </div>
-    <div className="logo-word">Elevate</div>
+// The T with plates on the bar, also used for the home screen icon.
+const Mark = ({ size = 30 }) => (
+  <svg className="mark" width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+    <rect x="5" y="7" width="22" height="3.4" rx="1" />
+    <rect x="14.3" y="7" width="3.4" height="20" rx="1" />
+    <rect x="1.5" y="3" width="3" height="11" rx="1" />
+    <rect x="27.5" y="3" width="3" height="11" rx="1" />
+    <rect x="5.6" y="4.8" width="2.2" height="7.8" rx=".8" />
+    <rect x="24.2" y="4.8" width="2.2" height="7.8" rx=".8" />
+  </svg>
+);
+
+const Logo = () => (
+  <div className="logo">
+    <Mark size={32} />
+    <span className="logo-word">Elevate</span>
   </div>
+);
+
+const UnitInput = ({ unit, ...props }) => (
+  <span className={`unit-input ${unit ? 'has-unit' : ''}`}>
+    <input {...props} />
+    {unit && <span aria-hidden="true">{unit}</span>}
+  </span>
 );
 
 const TabButton = ({ active, children, onClick }) => (
@@ -176,7 +188,7 @@ const setSummary = (set, fallbackToPlan = true) => {
   const time = set.actualTime || set.plannedTime;
   if (!fallbackToPlan && !set.actualWeight && !set.actualReps && !set.actualTime) return '';
   if (time) return `${time}`;
-  if (weight && reps) return `${weight} x ${reps}`;
+  if (weight && reps) return `${weight} lb × ${reps}`;
   if (reps) return `${reps} reps`;
   return '';
 };
@@ -186,7 +198,7 @@ const performedSetSummary = (set) => (set.completed ? setSummary(set, false) : '
 const sessionTimestampForDate = (date) => new Date(`${date || todayISO()}T12:00:00`).toISOString();
 
 const completionTimestampForSession = (session) => {
-  const sessionDate = String(session.dateStarted || '').slice(0, 10);
+  const sessionDate = localDateKey(session.dateStarted);
   return sessionDate && sessionDate !== todayISO() ? session.dateStarted : new Date().toISOString();
 };
 
@@ -491,26 +503,31 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
   const unfinished = resumableSessions(data.workoutSessions);
   const routines = data.plannedWorkouts.filter(isRoutine);
   const recentCount = completed.filter(s => { const days = (Date.now() - new Date(s.dateCompleted || s.dateStarted)) / 86400000; return days >= 0 && days < 7; }).length;
+  const planSets = todaysPlan?.exercises?.reduce((n, exercise) => n + (exercise.sets?.length || 0), 0) || 0;
   return <div className="screen today-screen">
-    <header className="today-header"><Logo compact /><span>{formatDate(todayISO())}</span></header>
+    <header className="today-header"><Logo /><span>{formatDate(todayISO())}</span></header>
     {preview && <div className="info-strip">Preview · Sample data stays in this tab. No cloud writes.</div>}
-    {(legacySummary.workouts + legacySummary.habitDays + legacySummary.metrics) > 0 && <section className="panel"><h2>Earlier Elevate data found</h2><button className="secondary-button" onClick={importLegacy}>Import legacy data</button></section>}
+    {(legacySummary.workouts + legacySummary.habitDays + legacySummary.metrics) > 0 && <section className="ledger-section"><h2 className="section-title">Earlier Elevate data found</h2><button className="secondary-button" onClick={importLegacy}>Import legacy data</button></section>}
     <section className="today-primary">
-      <span className="eyebrow">{session ? 'Pick up where you left off' : 'Make time for yourself'}</span>
-      <h1>{session ? workoutName(session) : todaysPlan ? workoutName(todaysPlan) : 'Ready when you are'}</h1>
-      <p>{session ? `${completedSetCount(session)} ${completedSetCount(session) === 1 ? 'set' : 'sets'} checked · ${formatDate(session.dateStarted)}` : todaysPlan ? `${todaysPlan.exercises.length} ${todaysPlan.exercises.length === 1 ? 'exercise' : 'exercises'} in your plan` : 'Start with a saved routine or build today’s session.'}</p>
+      <p className="label">{session ? 'Pick up where you left off' : todaysPlan ? 'Today' : 'Make time for yourself'}</p>
+      <h1 className="display-title">{session ? workoutName(session) : todaysPlan ? workoutName(todaysPlan) : 'Ready when you are'}</h1>
+      <p className="screen-meta">{session ? `${completedSetCount(session)} ${completedSetCount(session) === 1 ? 'set' : 'sets'} checked · ${formatDate(session.dateStarted)}` : todaysPlan ? `${todaysPlan.exercises.length} ${todaysPlan.exercises.length === 1 ? 'exercise' : 'exercises'} · ${planSets} ${planSets === 1 ? 'set' : 'sets'}` : 'Start with a saved routine or build today’s session.'}</p>
       <button className="primary-button full-width" onClick={() => session ? resumeSession(session) : todaysPlan ? startPlan(todaysPlan) : setActiveTab('plan')}><Dumbbell size={19} />{session ? 'Resume workout' : todaysPlan ? 'Start workout' : 'Plan a workout'}</button>
       {todaysPlan && !session && <button className="text-button" onClick={() => reviewPlan(todaysPlan)}>Review or adjust plan</button>}
+      {!session && todaysPlan?.exercises?.length > 0 && <ol className="ledger">{todaysPlan.exercises.map(exercise => <li key={exercise.id}><span>{exercise.exerciseName}</span><b>{exercise.sets.length} {exercise.sets.length === 1 ? 'set' : 'sets'}</b></li>)}</ol>}
     </section>
     <div className="week-line"><strong>{recentCount}</strong><span>{recentCount === 1 ? 'completed session' : 'completed sessions'} in the last 7 days</span><button className="text-button" onClick={() => setActiveTab('history')}>History</button></div>
-    <section className="routines-section"><div className="section-heading"><h2>Your routines</h2><span>{routines.length} saved</span></div>
+    <section className="ledger-section"><div className="section-heading"><h2>Your routines</h2><span>{routines.length} saved</span></div>
       {routines.map(routine => <div className="routine-row" key={routine.id}><div><strong>{workoutName(routine)}</strong><small>{routine.exercises.length ? `${routine.exercises.length} ${routine.exercises.length === 1 ? 'exercise' : 'exercises'}` : routine.workoutType}</small></div><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(routine))}>Use routine</button></div>)}
       {!routines.length && <p className="muted">Save a workout you like, then make it yours again.</p>}
       {completed[0] && <div className="recent-repeat"><span><strong>Repeat your last workout</strong><small>{workoutName(completed[0])} · {formatDate(completed[0].dateCompleted || completed[0].dateStarted)}</small></span><div className="button-row"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(completed[0]))}>Review repeat</button><button className="text-button" onClick={() => saveRoutine(completed[0])}>Save routine</button></div></div>}
     </section>
     <PullUpProgress sessions={data.workoutSessions} />
     {unfinished.filter(item => item.id !== session?.id).length > 0 && <details className="panel"><summary>Other unfinished sessions</summary>{unfinished.filter(item => item.id !== session?.id).map(item => <div className="routine-row" key={item.id}><span>{workoutName(item)}<small>{formatDate(item.dateStarted)} · {completedSetCount(item)} sets checked</small></span><button className="text-button" onClick={() => resumeSession(item)}>Resume</button></div>)}</details>}
-    <div className="account-tools"><button className="text-button" onClick={exportData}><Download size={16} />Export data</button>{!preview && <button className="text-button" onClick={onSignOut}>Sign out</button>}</div>
+    <details className="account-area"><summary>Account and data</summary>
+      <p className="muted">Download every workout, scan, and habit as JSON for planning or backup.</p>
+      <div className="button-row wrap"><button className="secondary-button" onClick={exportData}><Download size={16} />Export data</button>{!preview && <button className="ghost-button" onClick={onSignOut}><LogOut size={16} />Sign out</button>}</div>
+    </details>
   </div>;
 };
 
@@ -597,7 +614,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
 
   return (
     <div className="screen">
-      <ScreenHeader icon={CalendarPlus} title={draft?.routineName || "Workout plan"} subtitle="Review your plan, then make it yours." />
+      <ScreenHeader label="Track" title={draft?.routineName || 'Plan a workout'} meta="Review your plan, then make it yours." />
       {planSaved && <p className="notice success" role="status">Plan saved</p>}
       <section className="panel stack">
         <div className="plan-fields">
@@ -662,7 +679,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
                     <div className="set-row" key={set.id}>
                       <strong>{index + 1}</strong>
                       <input aria-label={`Target for ${exercise.exerciseName} set ${index + 1}`} value={set.plannedTime || set.plannedReps} onChange={(event) => updateSet(exercise.id, set.id, exercises.find(e => e.id === exercise.exerciseId)?.tracking === 'time' ? { plannedTime: event.target.value, plannedReps: '' } : { plannedReps: event.target.value })} placeholder="Reps or time" />
-                      <input aria-label={`Weight for ${exercise.exerciseName} set ${index + 1}`} value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lbs" />
+                      <input aria-label={`Weight for ${exercise.exerciseName} set ${index + 1}`} value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lb" />
                     </div>
                   ))}
                 </div>
@@ -688,11 +705,11 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
   );
 };
 
-const ScreenHeader = ({ icon: IconComponent, title, subtitle }) => (
+const ScreenHeader = ({ label, title, meta }) => (
   <header className="screen-header">
-    <Logo compact />
-    <div><IconComponent size={21} /><h1>{title}</h1></div>
-    <p>{subtitle}</p>
+    {label && <p className="label">{label}</p>}
+    <h1 className="display-title">{title}</h1>
+    {meta && <p className="screen-meta">{meta}</p>}
   </header>
 );
 
@@ -701,7 +718,7 @@ const SessionElapsed = ({ startedAt }) => {
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   if (!startedAt) return null;
   const minutes = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 60000));
-  return <p className="session-elapsed">{minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`} since start</p>;
+  return <p className="session-elapsed">{minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`}</p>;
 };
 
 const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, saveExerciseNote, saveCustomExercise, clearActive }) => {
@@ -715,6 +732,10 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const strength = session.strength || '';
   const wod = crossFit ? crossFitWodValue(session) : '';
   const exerciseLogs = session.exerciseLogs || [];
+  const totalSets = exerciseLogs.reduce((n, log) => n + log.sets.length, 0);
+  const upcoming = nextSet(session);
+  // Rest counts down just above the next set. A collapsed exercise moves it to the top of the screen.
+  const restInline = Boolean(session.restTimer && upcoming && !upcoming.log.collapsed);
 
   const patchLog = (logId, updater) => {
     updateSession({
@@ -817,16 +838,24 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   };
   return (
     <div className="screen active-workout-screen">
-      <ScreenHeader icon={ListChecks} title={workoutName(session)} subtitle={freeform ? 'Log what you did.' : `${completedSetCount(session)} of ${exerciseLogs.reduce((n, log) => n + log.sets.length, 0)} sets checked`} />
-      <SessionElapsed startedAt={session.startedAt} />
+      <div className="active-top">
+        <header className="active-bar">
+          <div>
+            <p className="label">{workoutName(session)}</p>
+            <p className="active-count">{freeform ? 'Log what you did.' : <><b>{completedSetCount(session)}</b>of {totalSets} sets</>}</p>
+          </div>
+          <SessionElapsed startedAt={session.startedAt} />
+        </header>
+        {!freeform && <div className="workout-progress" role="progressbar" aria-label="Completed sets" aria-valuemin={0} aria-valuemax={totalSets} aria-valuenow={completedSetCount(session)}><span style={{ width: `${100 * completedSetCount(session) / Math.max(1, totalSets)}%` }} /></div>}
+      </div>
       {!freeform && session.warmUp && <details className="warmup-cue" open={completedSetCount(session) === 0}><summary>Warm up</summary><p>{session.warmUp}</p></details>}
-      {!freeform && <div className="workout-progress" role="progressbar" aria-label="Completed sets" aria-valuemin={0} aria-valuemax={exerciseLogs.reduce((n, log) => n + log.sets.length, 0)} aria-valuenow={completedSetCount(session)}><span style={{ width: `${100 * completedSetCount(session) / Math.max(1, exerciseLogs.reduce((n, log) => n + log.sets.length, 0))}%` }} /></div>}
+      {!freeform && session.restTimer && !restInline && <RestTimer variant="inline" showExercise session={session} updateSession={updateSession} />}
       {!freeform && exerciseLogs.map((log) => {
         const exercise = findExercise(exercises, log.exerciseId) || log;
         const tab = detailTabs[log.id] || '';
         return (
-          <section className={`exercise-card ${log.sets.every(s => s.completed) ? 'exercise-finished' : ''}`} key={log.id}>
-            <button className="exercise-card-head" onClick={() => patchLog(log.id, (item) => ({ ...item, collapsed: !item.collapsed }))}>
+          <section className={`exercise-block ${log.sets.every(s => s.completed) ? 'exercise-finished' : ''}`} key={log.id}>
+            <button className="exercise-head" aria-expanded={!log.collapsed} onClick={() => patchLog(log.id, (item) => ({ ...item, collapsed: !item.collapsed }))}>
               <span>
                 <strong>{log.exerciseName}</strong>
                 <small>{log.sets.filter(set => set.completed).length}/{log.sets.length} sets · {exercise.equipment || log.group}</small>
@@ -834,24 +863,30 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
               {log.collapsed ? <ChevronDown size={19} /> : <ChevronUp size={19} />}
             </button>
             {!log.collapsed && (
-              <div className="exercise-card-body">
+              <div className="exercise-body">
                 <div className="exercise-rest-setting"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${log.exerciseName}`} value={log.restSeconds ?? restSecondsFor(log, exercise)} onChange={event => patchLog(log.id, item => ({ ...item, restSeconds: event.target.value === '' ? '' : Math.min(900, Math.max(0, Number(event.target.value))) }))} /> sec</label><span>{log.exerciseName === 'Assisted Pull-Up' ? 'Weight is assistance' : 'After each set'}</span></div>
                 {data.exerciseNotes[log.exerciseId] && <p className="setup-cue">{data.exerciseNotes[log.exerciseId]}</p>}
-                <div className="set-table">
-                  <div className="set-head"><span>Set</span><span>Previous</span><span>Today</span><span></span></div>
-                  {log.sets.map((set, index) => (
-                    <div className={`set-row active-set-row ${set.completed ? 'set-done' : ''}`} key={set.id}>
-                      <strong>{index + 1}</strong>
-                      <small>{set.previousSnapshot || '—'}</small>
-                      <div className={`today-inputs ${exercise.tracking === 'time' || exercise.tracking === 'bodyweight_reps' ? 'single-input' : ''}`}>
-                        {exercise.tracking === 'time' ? <input aria-label={`Time for ${log.exerciseName} set ${index + 1}`} value={set.actualTime} onChange={event => patchSet(log.id, set.id, index, { actualTime: event.target.value })} placeholder="e.g. 30 min" /> : <>
-                          {exercise.tracking !== 'bodyweight_reps' && <input aria-label={`${log.exerciseName === 'Assisted Pull-Up' ? 'Assistance' : 'Weight'} for ${log.exerciseName} set ${index + 1}`} value={set.actualWeight} onChange={event => patchSet(log.id, set.id, index, { actualWeight: event.target.value })} placeholder="lb" inputMode="decimal" />}
-                          <input aria-label={`Reps for ${log.exerciseName} set ${index + 1}`} value={set.actualReps} onChange={event => patchSet(log.id, set.id, index, { actualReps: event.target.value })} placeholder="reps" inputMode="decimal" />
-                        </>}
-                      </div>
-                      <button className={`check-button ${set.completed ? 'done' : ''}`} disabled={!set.completed && !String((exercise.tracking === 'time' ? set.actualTime : set.actualReps) || '').trim()} onClick={() => toggleSet(log, set, index)} aria-pressed={set.completed} aria-label={`${set.completed ? 'Undo' : 'Complete'} ${log.exerciseName} set ${index + 1}`}><Check size={20} /></button>
-                    </div>
-                  ))}
+                <div className="log-sets">
+                  {log.sets.map((set, index) => {
+                    const isNext = upcoming?.log.id === log.id && upcoming.index === index;
+                    const single = exercise.tracking === 'time' || exercise.tracking === 'bodyweight_reps';
+                    return (
+                      <Fragment key={set.id}>
+                        {isNext && restInline && <RestTimer variant="inline" session={session} updateSession={updateSession} />}
+                        <div className={`log-set ${set.completed ? 'set-done' : ''} ${isNext ? 'set-next' : ''}`}>
+                          <span className="set-number" aria-hidden="true">{index + 1}</span>
+                          <div className={`set-fields ${single ? 'single' : ''}`}>
+                            {exercise.tracking === 'time' ? <UnitInput aria-label={`Time for ${log.exerciseName} set ${index + 1}`} value={set.actualTime} onChange={event => patchSet(log.id, set.id, index, { actualTime: event.target.value })} placeholder="e.g. 30 min" /> : <>
+                              {exercise.tracking !== 'bodyweight_reps' && <UnitInput unit="lb" aria-label={`${log.exerciseName === 'Assisted Pull-Up' ? 'Assistance' : 'Weight'} for ${log.exerciseName} set ${index + 1}`} value={set.actualWeight} onChange={event => patchSet(log.id, set.id, index, { actualWeight: event.target.value })} placeholder="0" inputMode="decimal" />}
+                              <UnitInput unit="reps" aria-label={`Reps for ${log.exerciseName} set ${index + 1}`} value={set.actualReps} onChange={event => patchSet(log.id, set.id, index, { actualReps: event.target.value })} placeholder="0" inputMode="decimal" />
+                            </>}
+                            {set.previousSnapshot && <small className="set-previous">Last time {set.previousSnapshot}</small>}
+                          </div>
+                          <button className={`check-button ${set.completed ? 'done' : ''}`} disabled={!set.completed && !String((exercise.tracking === 'time' ? set.actualTime : set.actualReps) || '').trim()} onClick={() => toggleSet(log, set, index)} aria-pressed={set.completed} aria-label={`${set.completed ? 'Undo' : 'Complete'} ${log.exerciseName} set ${index + 1}`}><Check size={22} /></button>
+                        </div>
+                      </Fragment>
+                    );
+                  })}
                 </div>
                 <div className="button-row wrap">
                   {exercise.tracking !== 'time' && exercise.tracking !== 'bodyweight_reps' && <button className="text-button" onClick={() => patchAllSetWeights(log.id, log.sets[0]?.actualWeight || '')}>Use first weight for all sets</button>}
@@ -986,88 +1021,134 @@ const ExerciseHistory = ({ sessions, exerciseId }) => {
   );
 };
 
-const HistoryView = ({ sessions, exportData, deleteSession, reviewPlan, saveRoutine }) => {
+const WEEKDAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+
+const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
   const completed = sortSessionsByWorkoutDateDesc(sessions.filter((session) => session.status === 'completed'));
+  const today = todayISO();
+  // Four full weeks, Monday first, ending with the current week.
+  const mondayOffset = (new Date(`${today}T12:00:00`).getDay() + 6) % 7;
+  const start = addDays(today, -mondayOffset - 21);
+  const days = Array.from({ length: 28 }, (_, index) => addDays(start, index));
+  const dayOf = (session) => localDateKey(session.dateCompleted || session.dateStarted);
+  const counts = {};
+  completed.forEach((session) => { counts[dayOf(session)] = (counts[dayOf(session)] || 0) + 1; });
+  const recent = completed.filter((session) => dayOf(session) >= start && dayOf(session) <= today).length;
+  const anchored = new Set();
+  const jumpTo = (day) => document.getElementById(`day-${day}`)?.scrollIntoView({ block: 'start' });
   return (
     <div className="screen">
-      <ScreenHeader icon={History} title="History" subtitle="Completed sessions and workout notes." />
-      <section className="panel history-export-panel">
-        <span>
-          <strong>Workout data export</strong>
-          <small>Download JSON for AI planning or manual backup.</small>
-        </span>
-        <button className="secondary-button" onClick={exportData}><Download size={17} /> Download JSON</button>
+      <ScreenHeader label="History" title="Training log" meta={`${completed.length} completed ${completed.length === 1 ? 'workout' : 'workouts'}`} />
+      <section className="calendar" aria-label="Last four weeks">
+        <div className="calendar-head" aria-hidden="true">{WEEKDAY_LETTERS.map((letter, index) => <span key={index}>{letter}</span>)}</div>
+        <div className="calendar-grid">
+          {days.map((day) => {
+            const count = counts[day] || 0;
+            const className = `cal-day ${day === today ? 'today' : ''} ${day > today ? 'future' : ''} ${count ? 'has-workout' : ''}`;
+            return count
+              ? <button key={day} className={className} onClick={() => jumpTo(day)} aria-label={`${formatDate(day)}, ${count} ${count === 1 ? 'workout' : 'workouts'}. Show in log.`}>{Number(day.slice(8))}</button>
+              : <span key={day} className={className} aria-hidden="true">{Number(day.slice(8))}</span>;
+          })}
+        </div>
+        <p className="screen-meta">{recent} {recent === 1 ? 'session' : 'sessions'} in the last four weeks</p>
       </section>
-      <div className="stack">
-        {completed.map((session) => {
-          const freeform = isFreeformWorkout(session.workoutType || session.title);
-          const crossFit = isCrossFitWorkout(session.workoutType || session.title);
-          const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
-          const { strength, wod, notes } = crossFit ? historyCrossFitText(session) : { strength: '', wod: '', notes: session.notes || '' };
-          return (
-            <section className="panel" key={session.id}>
-              <div className="section-heading">
-                <h2>{formatDate(session.dateCompleted || session.dateStarted)}</h2>
-                <div className="history-card-actions">
-                  <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : `${session.exerciseLogs?.length || 0} ${session.exerciseLogs?.length === 1 ? 'exercise' : 'exercises'}`}</span>
-                  <button className="text-button danger history-delete-button" onClick={() => deleteSession(session)}>
-                    <Trash2 size={16} /> Delete
-                  </button>
-                </div>
+      {completed.map((session) => {
+        const freeform = isFreeformWorkout(session.workoutType || session.title);
+        const crossFit = isCrossFitWorkout(session.workoutType || session.title);
+        const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
+        const { strength, wod, notes } = crossFit ? historyCrossFitText(session) : { strength: '', wod: '', notes: session.notes || '' };
+        const day = dayOf(session);
+        const anchor = anchored.has(day) ? undefined : `day-${day}`;
+        anchored.add(day);
+        return (
+          <article className="log-entry" id={anchor} key={session.id}>
+            <header className="log-entry-head">
+              <div>
+                <p className="label">{formatDate(session.dateCompleted || session.dateStarted)}</p>
+                <h2 className="entry-title">{workoutName(session)}</h2>
               </div>
-              <p className="workout-type-label">{workoutName(session)}</p>
-              <div className="button-row history-repeat"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(session))}>Repeat workout</button><button className="text-button" onClick={() => saveRoutine(session)}>Save routine</button></div>
-              {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
-              {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
-              {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
-              {freeform && !crossFit && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
-              {!freeform && session.exerciseLogs?.map((log) => (
-                <div className="activity-row" key={log.id}>
-                  <Dumbbell size={17} />
-                  <span><strong>{log.exerciseName}</strong><small>{log.sets.map(performedSetSummary).filter(Boolean).join(' / ') || 'No completed sets'}</small></span>
-                </div>
-              ))}
-              {!freeform && session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
-              {notes && <p className="note-copy"><strong>Notes</strong><br />{notes}</p>}
-            </section>
-          );
-        })}
-        {!completed.length && <p className="empty page-empty">No completed workouts yet.</p>}
-      </div>
+              <span className="entry-count">{freeform ? `${session.workoutType || 'Workout'} log` : `${session.exerciseLogs?.length || 0} ${session.exerciseLogs?.length === 1 ? 'exercise' : 'exercises'}`}</span>
+            </header>
+            {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
+            {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
+            {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
+            {freeform && !crossFit && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
+            {!freeform && session.exerciseLogs?.length > 0 && (
+              <ul className="entry-lines">
+                {session.exerciseLogs.map((log) => (
+                  <li key={log.id}><strong>{log.exerciseName}</strong><small>{log.sets.map(performedSetSummary).filter(Boolean).join(' / ') || 'No completed sets'}</small></li>
+                ))}
+              </ul>
+            )}
+            {!freeform && session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
+            {notes && <p className="note-copy"><strong>Notes</strong><br />{notes}</p>}
+            <div className="button-row wrap entry-actions">
+              <button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(session))}>Repeat workout</button>
+              <button className="text-button" onClick={() => saveRoutine(session)}>Save routine</button>
+              <button className="text-button danger" onClick={() => deleteSession(session)}><Trash2 size={16} /> Delete</button>
+            </div>
+          </article>
+        );
+      })}
+      {!completed.length && <p className="empty page-empty">No completed workouts yet.</p>}
     </div>
   );
 };
 
 const HabitTracker = ({ habitLogs, saveHabitLog }) => {
   const today = todayISO();
-  const isDone = (habitId) => habitLogs.some((log) => log.date === today && log.habitId === habitId && log.completed);
-  const toggle = (habitId) => {
-    const existing = habitLogs.find((log) => log.date === today && log.habitId === habitId);
-    saveHabitLog({ id: existing?.id || uid('habit'), date: today, habitId, completed: !isDone(habitId) });
+  const days = Array.from({ length: 7 }, (_, index) => addDays(today, index - 6));
+  // Today and yesterday stay editable so a missed tap from last night can be fixed.
+  const editable = new Set(days.slice(-2));
+  const logFor = (date, habitId) => habitLogs.find((log) => log.date === date && log.habitId === habitId);
+  const toggle = (date, habitId) => {
+    const existing = logFor(date, habitId);
+    saveHabitLog({ id: existing?.id || uid('habit'), date, habitId, completed: !existing?.completed });
   };
+  const doneToday = defaultHabits.filter((habit) => logFor(today, habit.id)?.completed).length;
+  const weekday = (date) => new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { weekday: 'narrow' });
   return (
     <div className="screen">
-      <ScreenHeader icon={CheckCircle2} title="Daily habits" subtitle={formatDate(today)} />
-      <div className="stack">
-        {defaultHabits.map((habit) => (
-          <button key={habit.id} className={`habit-row ${isDone(habit.id) ? 'done' : ''}`} onClick={() => toggle(habit.id)}>
-            <span><CheckCircle2 size={22} /><strong>{habit.name}</strong></span>
-            <Check size={18} />
-          </button>
-        ))}
+      <ScreenHeader label="Habits" title="Daily habits" meta={`${doneToday} of ${defaultHabits.length} done today. Today and yesterday can be changed.`} />
+      <div className="habit-grid" role="table" aria-label="Habits for the last 7 days">
+        <div className="habit-grid-row habit-grid-head" role="row">
+          <span className="sr-only" role="columnheader">Habit</span>
+          {days.map((date) => <span key={date} role="columnheader" className={date === today ? 'is-today' : ''}><b>{weekday(date)}</b>{Number(date.slice(8))}</span>)}
+        </div>
+        {defaultHabits.map((habit) => {
+          const count = days.filter((date) => logFor(date, habit.id)?.completed).length;
+          return (
+            <div className="habit-grid-row" role="row" key={habit.id}>
+              <span className="habit-name" role="rowheader">{habit.name}<small>{count} of 7 days</small></span>
+              {days.map((date) => {
+                const done = Boolean(logFor(date, habit.id)?.completed);
+                const label = `${habit.name}, ${formatDate(date)}, ${done ? 'done' : 'not done'}`;
+                return (
+                  <span role="cell" key={date}>
+                    {editable.has(date)
+                      ? <button className={`habit-cell ${done ? 'done' : ''} ${date === today ? 'is-today' : ''}`} aria-pressed={done} aria-label={label} onClick={() => toggle(date, habit.id)}>{done && <Check size={18} />}</button>
+                      : <span className={`habit-cell readonly ${done ? 'done' : ''}`} role="img" aria-label={label}>{done && <Check size={14} />}</span>}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 };
 
 const metricDefinitions = [
-  { key: 'weight', label: 'Weight', unit: 'lbs', color: '#2563eb', goal: 'neutral' },
-  { key: 'skeletalMuscleMass', label: 'SMM', unit: 'lbs', color: '#16a34a', goal: 'up' },
-  { key: 'percentBodyFat', label: 'PBF', unit: '%', color: '#e11d48', goal: 'down' },
-  { key: 'bodyFatMass', label: 'BFM', unit: 'lbs', color: '#d97706', goal: 'down' },
+  { key: 'weight', label: 'Weight', unit: 'lb', goal: 'neutral' },
+  { key: 'skeletalMuscleMass', label: 'SMM', unit: 'lb', goal: 'up' },
+  { key: 'percentBodyFat', label: 'PBF', unit: '%', goal: 'down' },
+  { key: 'bodyFatMass', label: 'BFM', unit: 'lb', goal: 'down' },
 ];
 
+// A blank reading is missing, never zero.
 const toMetricNumber = (value) => {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 };
@@ -1108,7 +1189,7 @@ const InBodyProgressChart = ({ scans }) => {
   const latest = values.at(-1);
   const delta = latest !== undefined && first !== undefined ? latest - first : 0;
   const useful =
-    activeDefinition.goal === 'up' ? delta > 0 : activeDefinition.goal === 'down' ? delta < 0 : Math.abs(delta) > 0;
+    activeDefinition.goal === 'up' ? delta > 0 : activeDefinition.goal === 'down' ? delta < 0 : false;
 
   return (
     <section className="panel metric-chart-panel">
@@ -1123,12 +1204,12 @@ const InBodyProgressChart = ({ scans }) => {
           const first = values[0];
           const delta = latest !== undefined && first !== undefined ? latest - first : 0;
           const useful =
-            definition.goal === 'up' ? delta > 0 : definition.goal === 'down' ? delta < 0 : Math.abs(delta) > 0;
+            definition.goal === 'up' ? delta > 0 : definition.goal === 'down' ? delta < 0 : false;
           return (
             <button
               key={definition.key}
               className={`metric-toggle ${activeKey === definition.key ? 'active' : ''}`}
-              style={{ '--metric-color': definition.color }}
+              aria-pressed={activeKey === definition.key}
               onClick={() => setActiveKey(definition.key)}
             >
               <strong>{definition.label}</strong>
@@ -1144,7 +1225,7 @@ const InBodyProgressChart = ({ scans }) => {
       </div>
       {hasProgress ? (
         <div className="metric-chart-wrap">
-          <div className="single-metric-summary" style={{ '--metric-color': activeDefinition.color }}>
+          <div className="single-metric-summary">
             <span>{activeDefinition.label}</span>
             <strong>{latest}{activeDefinition.unit}</strong>
             <small className={useful ? 'good' : ''}>
@@ -1166,26 +1247,16 @@ const InBodyProgressChart = ({ scans }) => {
               const x = left + (index / (chartScans.length - 1)) * plotWidth;
               return <line key={scan.date} x1={x} x2={x} y1={top} y2={top + plotHeight} className="chart-date-line" />;
             })}
-            <path
-              d={points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')}
-              fill="none"
-              stroke={activeDefinition.color}
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+            <path className="chart-line" d={points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} />
             {points.map((point, index) => (
               <g key={`${activeDefinition.key}-${index}`}>
-                <circle cx={point.x} cy={point.y} r="4" fill="#fff" stroke={activeDefinition.color} strokeWidth="2" />
+                <circle className="chart-point" cx={point.x} cy={point.y} r="4" />
                 <text x={point.x} y={point.y - 9} className="chart-value-label">{point.value}{activeDefinition.unit}</text>
               </g>
             ))}
             <text x={left} y={height - 9} className="chart-date-label">{formatShortDate(chartScans[0]?.date)}</text>
             <text x={width - right} y={height - 9} className="chart-date-label end">{formatShortDate(chartScans.at(-1)?.date)}</text>
           </svg>
-          <div className="metric-chart-legend">
-            <span><i style={{ background: activeDefinition.color }} />{activeDefinition.label}</span>
-          </div>
         </div>
       ) : (
         <p className="empty">Add at least two {activeDefinition.label} readings to see this graph.</p>
@@ -1213,18 +1284,31 @@ const MetricsView = ({ scans, saveMetricScan }) => {
   // Offline saves prepend unsorted, so order by scan date before choosing the latest.
   const ordered = [...scans].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
   const latest = ordered[0];
+  const previous = ordered[1];
   return (
     <div className="screen">
-      <ScreenHeader icon={BarChart3} title="InBody" subtitle="Weight, SMM, PBF, and Body Fat Mass." />
+      <ScreenHeader label="InBody" title="Body composition" meta="Weight, skeletal muscle mass, body fat percent, and body fat mass." />
       {latest && (
-        <section className="metric-hero">
-          <span>{formatDate(latest.date)}</span>
-          <div>
-            <strong>{latest.weight || '-'}</strong><small>Weight</small>
-            <strong>{latest.skeletalMuscleMass || '-'}</strong><small>SMM</small>
-            <strong>{latest.percentBodyFat ? `${latest.percentBodyFat}%` : '-'}</strong><small>PBF</small>
-            <strong>{latest.bodyFatMass || '-'}</strong><small>BFM</small>
-          </div>
+        <section className="metric-hero" aria-label="Latest scan compared with the previous scan">
+          <p className="label">Latest · {formatDate(latest.date)}{previous ? ` · vs ${formatShortDate(previous.date)}` : ''}</p>
+          <dl className="metric-hero-grid">
+            {metricDefinitions.map((definition) => {
+              const now = toMetricNumber(latest[definition.key]);
+              const before = previous ? toMetricNumber(previous[definition.key]) : null;
+              const delta = now !== null && before !== null ? Math.round((now - before) * 10) / 10 : null;
+              // Semantic color only where direction matters: SMM up is good, PBF and BFM down are good.
+              const tone = !delta || definition.goal === 'neutral' ? '' : (definition.goal === 'up') === (delta > 0) ? 'good' : 'bad';
+              return (
+                <div key={definition.key}>
+                  <dt>{definition.label}</dt>
+                  <dd>
+                    <span className="metric-value">{now ?? '-'}{now !== null && <small>{definition.unit}</small>}</span>
+                    {delta !== null && <span className={`metric-delta ${tone}`}>{delta > 0 ? '+' : ''}{delta}{definition.unit}</span>}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
         </section>
       )}
       <InBodyProgressChart scans={scans} />
@@ -1232,10 +1316,10 @@ const MetricsView = ({ scans, saveMetricScan }) => {
         <div className="section-heading"><h2>Log new scan</h2></div>
         <Field label="Date"><input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></Field>
         <div className="two-col">
-          <Field label="Weight"><input inputMode="decimal" value={draft.weight} onChange={(event) => setDraft({ ...draft, weight: event.target.value })} placeholder="lbs" /></Field>
-          <Field label="SMM"><input inputMode="decimal" value={draft.skeletalMuscleMass} onChange={(event) => setDraft({ ...draft, skeletalMuscleMass: event.target.value })} placeholder="lbs" /></Field>
+          <Field label="Weight"><input inputMode="decimal" value={draft.weight} onChange={(event) => setDraft({ ...draft, weight: event.target.value })} placeholder="lb" /></Field>
+          <Field label="SMM"><input inputMode="decimal" value={draft.skeletalMuscleMass} onChange={(event) => setDraft({ ...draft, skeletalMuscleMass: event.target.value })} placeholder="lb" /></Field>
           <Field label="PBF"><input inputMode="decimal" value={draft.percentBodyFat} onChange={(event) => setDraft({ ...draft, percentBodyFat: event.target.value })} placeholder="%" /></Field>
-          <Field label="Body Fat Mass"><input inputMode="decimal" value={draft.bodyFatMass} onChange={(event) => setDraft({ ...draft, bodyFatMass: event.target.value })} placeholder="lbs" /></Field>
+          <Field label="Body Fat Mass"><input inputMode="decimal" value={draft.bodyFatMass} onChange={(event) => setDraft({ ...draft, bodyFatMass: event.target.value })} placeholder="lb" /></Field>
         </div>
         {problem && <p className="notice error" role="alert">{problem}</p>}
         <button className="primary-button" onClick={save}>Save scan</button>
@@ -1245,7 +1329,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
         {ordered.map((scan) => (
           <div className="metric-row" key={scan.id}>
             <strong>{formatDate(scan.date)}</strong>
-            <span>{scan.weight} lbs / {scan.percentBodyFat || '-'}% / BFM {scan.bodyFatMass || '-'}</span>
+            <span>{scan.weight} lb · PBF {scan.percentBodyFat || '-'}% · BFM {scan.bodyFatMass || '-'} lb</span>
           </div>
         ))}
         {!scans.length && <p className="empty">No scans yet.</p>}
@@ -1612,7 +1696,7 @@ export default function App() {
   );
 
   return (
-    <div className={`app-shell ${session?.restTimer ? 'has-rest-timer' : ''}`}>
+    <div className={`app-shell ${session?.restTimer && activeTab !== 'active' ? 'has-rest-timer' : ''}`}>
       <main className="phone-frame">
         <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.dead ? 'Not synced · A change needs attention' : syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? (preview ? 'Saved in this tab' : 'Saved on device · Syncing') : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
         {syncStatus.dead > 0 && <div className="error-banner" role="alert">{syncStatus.dead === 1 ? 'One change could not sync.' : `${syncStatus.dead} changes could not sync.`} {syncStatus.error}<div className="button-row"><button className="text-button" onClick={exportData}>Export data</button><button className="text-button" onClick={discardFailed}>Discard failed change</button></div></div>}
@@ -1663,13 +1747,13 @@ export default function App() {
         {activeTab === 'habits' && <HabitTracker habitLogs={data.habitLogs} saveHabitLog={saveHabitLog} />}
         {activeTab === 'metrics' && <MetricsView scans={data.metricScans} saveMetricScan={saveMetricScan} />}
       </main>
-      <RestTimer session={session} updateSession={saveActiveSession} openWorkout={() => setActiveTab('active')} />
+      {activeTab !== 'active' && <RestTimer variant="pill" session={session} updateSession={saveActiveSession} openWorkout={() => setActiveTab('active')} />}
       <RoutineDialog source={routineSource} onClose={() => setRoutineSource(null)} onSave={persistRoutine} />
       <nav className="bottom-nav" aria-label="Main navigation">
         {navItems.map((item) => {
           const IconComponent = item.icon;
           return (
-            <button key={item.id} className={activeTab === item.id ? 'active' : ''} onClick={() => { if (item.id === 'plan') setDraft(null); setNotice(''); setActiveTab(item.id); }}>
+            <button key={item.id} className={activeTab === item.id ? 'active' : ''} aria-current={activeTab === item.id ? 'page' : undefined} onClick={() => { if (item.id === 'plan') setDraft(null); setNotice(''); setActiveTab(item.id); }}>
               <IconComponent size={21} />
               <span>{item.label}</span>
             </button>

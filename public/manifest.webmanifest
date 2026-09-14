@@ -1,12 +1,12 @@
 {
   "name": "Elevate Fitness",
   "short_name": "Elevate",
-  "description": "Private workout planning and tracking for Tarae.",
+  "description": "Private workout planning and tracking.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#f9fafb",
-  "theme_color": "#2563eb",
+  "background_color": "#F2F3EF",
+  "theme_color": "#F2F3EF",
   "orientation": "portrait",
   "icons": [
     {
