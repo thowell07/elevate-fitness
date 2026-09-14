@@ -1,12 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatDuration, remainingRest, nextSet } from '../lib/training.js';
 
-export default function RestTimer({ session, updateSession, openWorkout }) {
+// The inline timer and the pill never render together, so they share one sound preference and audio context.
+const shared = { sound: false, audio: null, sounded: '' };
+
+const setText = (next) =>
+  `set ${next.index + 1}${next.set.actualWeight ? ` · ${next.set.actualWeight} lb` : ''}${next.set.actualReps ? ` × ${next.set.actualReps}` : ''}`;
+
+export default function RestTimer({ session, updateSession, openWorkout, variant = 'pill', showExercise = false }) {
   const timer = session?.restTimer;
   const [now, setNow] = useState(Date.now());
-  const [sound, setSound] = useState(false);
-  const audio = useRef(null);
-  const sounded = useRef('');
+  const [sound, setSound] = useState(shared.sound);
   useEffect(() => {
     if (!timer) return;
     const tick = () => setNow(Date.now());
@@ -18,11 +22,11 @@ export default function RestTimer({ session, updateSession, openWorkout }) {
   }, [timer]);
   const remaining = remainingRest(timer, now);
   useEffect(() => {
-    if (!timer || remaining || timer.pausedSeconds != null || !sound || document.hidden) return;
+    if (!timer || remaining || timer.pausedSeconds != null || !shared.sound || document.hidden) return;
     const key = `${session.id}:${timer.endsAt}`;
-    if (sounded.current === key) return;
-    sounded.current = key;
-    const ctx = audio.current;
+    if (shared.sounded === key) return;
+    shared.sounded = key;
+    const ctx = shared.audio;
     if (ctx?.state !== 'running') return;
     const tone = ctx.createOscillator(), gain = ctx.createGain();
     tone.connect(gain); gain.connect(ctx.destination); tone.frequency.value = 660;
@@ -30,29 +34,51 @@ export default function RestTimer({ session, updateSession, openWorkout }) {
     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
     tone.start(); tone.stop(ctx.currentTime + 0.45);
   }, [remaining, timer, sound, session?.id]);
-  useEffect(() => () => { audio.current?.close(); }, []);
   if (!timer || session.status !== 'active') return null;
+
   const next = nextSet(session);
+  const ready = remaining === 0;
+  const paused = timer.pausedSeconds != null;
+  const label = ready ? 'Rest complete' : paused ? 'Rest paused' : 'Rest';
+  const clock = ready ? 'Go' : formatDuration(remaining);
   const patch = restTimer => { setNow(Date.now()); updateSession({ ...session, restTimer }); };
   const toggleSound = async () => {
-    if (!sound) {
+    if (!shared.sound) {
       const Context = window.AudioContext || window.webkitAudioContext;
       if (!Context) return;
-      audio.current ||= new Context();
-      try { await audio.current.resume(); } catch { return; }
+      shared.audio ||= new Context();
+      try { await shared.audio.resume(); } catch { return; }
     }
-    setSound(!sound);
+    shared.sound = !shared.sound;
+    setSound(shared.sound);
   };
-  return <aside className={`rest-dock ${remaining === 0 ? 'rest-ready' : ''}`} aria-label="Rest timer">
-    <div className="rest-top"><div><span className="eyebrow">{remaining === 0 ? 'Ready when you are' : timer.pausedSeconds != null ? 'Rest paused' : 'Rest'}</span><strong role="timer" aria-label="Rest remaining">{remaining === 0 ? 'Rest complete' : formatDuration(remaining)}</strong></div>
-      <button className="sound-toggle" aria-pressed={sound} onClick={toggleSound}>{sound ? 'Sound on' : 'Sound off'}</button></div>
-    <button className="rest-next" onClick={openWorkout}>{next ? `Next · ${next.log.exerciseName} · Set ${next.index + 1}${next.set.actualWeight ? ` · ${next.set.actualWeight} lb` : ''}${next.set.actualReps ? ` × ${next.set.actualReps}` : ''}` : 'All sets checked · Review and finish'} →</button>
-    <div className="rest-controls">
-      {remaining > 0 && <button onClick={() => patch({ ...timer, pausedSeconds: timer.pausedSeconds != null ? null : remaining, endsAt: Date.now() + remaining * 1000 })}>{timer.pausedSeconds != null ? 'Resume' : 'Pause'}</button>}
-      <button onClick={() => patch({ ...timer, endsAt: Date.now() + (remaining + 30) * 1000, pausedSeconds: timer.pausedSeconds != null ? remaining + 30 : null })}>+30 sec</button>
-      <button onClick={() => patch({ ...timer, endsAt: Date.now() + timer.duration * 1000, pausedSeconds: null })}>Restart</button>
-      <button onClick={() => patch(null)}>{remaining ? 'Skip' : 'Dismiss'}</button>
+  const status = <span className="sr-only" role="status">{ready ? 'Rest complete. Start your next set when ready.' : ''}</span>;
+
+  if (variant === 'pill') {
+    return <>
+      <button type="button" className={`rest-pill ${ready ? 'rest-ready' : ''}`} onClick={openWorkout} aria-label={`${label}${ready ? '' : `, ${clock} left`}. Open workout.`}>
+        <span className="rest-pill-label">{label}</span>
+        <strong>{clock}</strong>
+        <span className="rest-pill-next">{next ? `${next.log.exerciseName} · ${setText(next)}` : 'Review and finish'}</span>
+      </button>
+      {status}
+    </>;
+  }
+
+  return <section className={`rest-inline ${ready ? 'rest-ready' : ''}`} aria-label="Rest timer">
+    <div className="rest-top">
+      <p className="label">{label}</p>
+      <button type="button" className="sound-toggle" aria-pressed={sound} onClick={toggleSound}>{sound ? 'Sound on' : 'Sound off'}</button>
     </div>
-    <span className="sr-only" role="status">{remaining === 0 ? 'Rest complete. Start your next set when ready.' : ''}</span>
-  </aside>;
+    <strong className="rest-clock" role="timer" aria-label="Rest remaining">{clock}</strong>
+    <p className="rest-next">{next ? `Then ${showExercise ? `${next.log.exerciseName}, ` : ''}${setText(next)}` : 'All sets checked. Review and finish.'}</p>
+    <div className="rest-controls">
+      {remaining > 0 && <button type="button" onClick={() => patch({ ...timer, pausedSeconds: paused ? null : remaining, endsAt: Date.now() + remaining * 1000 })}>{paused ? 'Resume' : 'Pause'}</button>}
+      <button type="button" onClick={() => patch({ ...timer, endsAt: Date.now() + (remaining + 30) * 1000, pausedSeconds: paused ? remaining + 30 : null })}>+30 sec</button>
+      <button type="button" onClick={() => patch({ ...timer, endsAt: Date.now() + timer.duration * 1000, pausedSeconds: null })}>Restart</button>
+      <button type="button" onClick={() => patch(null)}>{remaining ? 'Skip' : 'Dismiss'}</button>
+    </div>
+    <i className="rest-drain" aria-hidden="true" style={{ '--p': ready || !timer.duration ? 0 : Math.min(1, remaining / timer.duration) }} />
+    {status}
+  </section>;
 }

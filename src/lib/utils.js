@@ -31,6 +31,22 @@ export const formatDate = (value) => {
   });
 };
 
+// Calendar day in local time: timestamps convert, plain YYYY-MM-DD values pass through.
+export const localDateKey = (value) => {
+  if (!value) return '';
+  const text = String(value);
+  if (!text.includes('T')) return text.slice(0, 10);
+  const date = new Date(text);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+};
+
+// Adds whole days from local noon, so daylight saving changes never skip or repeat a date.
+export const addDays = (isoDate, days) => {
+  const date = new Date(`${isoDate}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return localDateKey(date.toISOString());
+};
+
 export const formatShortDate = (value) => {
   if (!value) return '';
   return displayDate(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
