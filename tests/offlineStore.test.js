@@ -57,3 +57,24 @@ test('cache remains isolated by user and quota failure is not a successful save'
  const broken=createOfflineStore(f.remote,{storage:{getItem:()=>null,setItem:()=>{throw new Error('quota');}},online:()=>false});
  await assert.rejects(broken.saveSession('one',{id:'s'}),/Could not save on this device/);
 });
+test('failed first load stays unavailable until an actual read succeeds', async () => {
+ const storage=memory(), f=fixture();let fail=true,status;
+ f.data.workoutSessions=[{id:'existing-session'}];f.data.metricScans=[{id:'existing-scan'}];
+ f.remote.loadBundle=async()=>{if(fail)throw new TypeError('Load failed');return structuredClone(f.data);};
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});store.subscribe(s=>status=s);
+ await assert.rejects(store.loadBundle('u'),/Load failed/);
+ assert.equal(store.needsRefresh(),true);assert.equal(status.readState,'error');
+ await store.flush('u');
+ assert.equal(status.readState,'error');assert.equal(store.needsRefresh(),true);
+ fail=false;const restored=await store.loadBundle('u');
+ assert.equal(restored.workoutSessions.length,1);assert.equal(restored.metricScans.length,1);
+ assert.equal(status.readState,'ready');assert.equal(store.needsRefresh(),false);
+});
+test('cached history remains visible but stale after failed refresh and empty save retry', async () => {
+ const storage=memory(), f=fixture();f.data.metricScans=[{id:'scan'}];
+ const initial=createOfflineStore(f.remote,{storage,online:()=>true});await initial.loadBundle('u');
+ f.remote.loadBundle=async()=>{throw new TypeError('Load failed');};
+ const reopened=createOfflineStore(f.remote,{storage,online:()=>true});let status;reopened.subscribe(s=>status=s);
+ const data=await reopened.loadBundle('u');assert.equal(data.metricScans.length,1);assert.equal(status.readState,'stale');
+ await reopened.flush('u');assert.equal(status.readState,'stale');assert.equal(reopened.needsRefresh(),true);
+});

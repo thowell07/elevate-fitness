@@ -54,3 +54,7 @@ There is no public signup screen in the app. Supabase row-level security restric
 No AI API integration, new paid service, or database migration is required. Existing workout IDs, exercise IDs, and the external planning bridge remain compatible. Avoid concurrently editing the same session on multiple devices; cloud records retain the existing last-write-wins behavior.
 
 Run `npm test` for timer, repeat, recovery, metadata, progression, and outbox checks. Run `npm run build` for the production bundle.
+
+### Account loading recovery
+
+Account reads use a bounded retry budget with per-attempt timeouts. Before the first successful load, a failed connection shows a recovery screen instead of zero workouts or scans. A failed refresh keeps the last device snapshot visible with a stale-data notice. Try again, returning to the app, reconnecting, and a 15-second retry check recover failed reads as well as queued saves. Save-queue success alone never clears a stale-read status. The InBody date field is constrained to its grid track for narrow Safari layouts.

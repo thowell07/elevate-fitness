@@ -1244,6 +1244,9 @@ export default function App() {
   const [preview, setPreview] = useState(!isSupabaseConfigured);
   const [data, setData] = useState(emptyData);
   const [loading, setLoading] = useState(true);
+  const [dataReady, setDataReady] = useState(false);
+  const [reloading, setReloading] = useState(false);
+  const reloadRef = useRef(() => {});
   const [error, setError] = useState('');
   const [legacySummary, setLegacySummary] = useState({ workouts: 0, habitDays: 0, metrics: 0 });
   const [syncStatus, setSyncStatus] = useState({ state: 'loading', pending: 0 });
@@ -1304,6 +1307,7 @@ export default function App() {
 
       if (event === 'SIGNED_OUT') {
         hasLoadedRef.current = false;
+        setDataReady(false);
         setData(emptyData);
         setSession(null);
         sessionRef.current = null;
@@ -1318,26 +1322,45 @@ export default function App() {
   useEffect(() => {
     if (!userId || (!preview && !isAllowedEmail(user?.email))) return;
     let cancelled = false;
-    // Only block the UI on the first load; token-refresh reloads happen silently.
-    if (!hasLoadedRef.current) setLoading(true);
-    runWithAuthRetry(() => store.loadBundle(userId))
-      .then((bundle) => {
+    let inFlight = false;
+    const reload = async () => {
+      if (inFlight || cancelled) return;
+      inFlight = true;
+      setReloading(true);
+      try {
+        const bundle = await store.loadBundle(userId);
         if (cancelled) return;
         hasLoadedRef.current = true;
-        setData(bundle);
-        const restored = resumableSessions(bundle.workoutSessions)[0] || null;
+        setDataReady(true);
+        setData({ ...emptyData, ...bundle });
+        const restored = resumableSessions(bundle.workoutSessions || [])[0] || null;
         setSession(restored);
         sessionRef.current = restored;
         setError('');
-      })
-      .catch((loadError) => {
-        if (!cancelled) setError(loadError.message || 'Could not load Elevate data.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      } catch (loadError) {
+        if (!cancelled) console.warn('[Elevate] Account data could not be loaded', { message: loadError.message, code: loadError.code });
+      } finally {
+        inFlight = false;
+        if (!cancelled) { setLoading(false); setReloading(false); }
+      }
+    };
+    reloadRef.current = reload;
+    if (!hasLoadedRef.current) setLoading(true);
+    void reload();
+    const retry = () => {
+      if (document.hidden) return;
+      // Retrying an empty save queue cannot recover a failed account read.
+      if (store.needsRefresh()) void reload();
+      else void store.flush(userId);
+    };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', retry);
+    const interval = setInterval(retry, 15000);
     return () => {
       cancelled = true;
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', retry);
+      clearInterval(interval);
     };
   }, [store, userId]);
 
@@ -1346,14 +1369,6 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => store.subscribe(setSyncStatus), [store]);
-  useEffect(() => {
-    if (!userId || (!preview && !isAllowedEmail(user?.email))) return;
-    const retry = () => { if (!document.hidden) void store.flush(userId); };
-    window.addEventListener('online', retry);
-    document.addEventListener('visibilitychange', retry);
-    const interval = setInterval(retry, 15000);
-    return () => { window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry); clearInterval(interval); };
-  }, [store, userId]);
 
   const saveData = async (action, nextData) => {
     setError('');
@@ -1514,10 +1529,22 @@ export default function App() {
     );
   }
 
+  if (!dataReady) return (
+    <main className="auth-screen load-recovery">
+      <Logo />
+      <section className="panel auth-panel" role="alert">
+        <h1>Your data couldn't load</h1>
+        <p>Elevate couldn't connect to your account. Your workouts and scans haven't loaded, so their totals aren't available yet.</p>
+        <p>Check your connection and try again. Elevate also retries automatically when you reconnect.</p>
+        <button className="primary-button" disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>
+      </section>
+    </main>
+  );
+
   return (
     <div className={`app-shell ${session?.restTimer ? 'has-rest-timer' : ''}`}>
       <main className="phone-frame">
-        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{['pending', 'offline'].includes(syncStatus.state) && <button onClick={() => store.flush(userId)}>Retry sync</button>}</div>
+        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
         {error && <div className="error-banner" role="alert">{error}<button className="text-button" onClick={exportData}>Export data</button></div>}
         {notice && <div className="notice success" role="status">{notice}<button className="text-button" onClick={() => setNotice('')} aria-label="Dismiss message">Dismiss</button></div>}
         {activeTab === 'home' && (

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { readQuery } from './readQuery';
 import { todayISO } from './utils';
 import { fromPlanRow, fromSessionRow } from './workoutRows';
 import { attachWorkoutDetails, createWorkoutDetails, DEFAULT_WORKOUT_TYPE } from './workoutDetails';
@@ -48,12 +49,12 @@ export const createSupabaseStore = () => ({
   mode: 'supabase',
   async loadBundle(userId) {
     const [customs, plans, sessions, notes, metrics, habits] = await Promise.all([
-      supabase.from('custom_exercises').select('*').eq('user_id', userId).order('name'),
-      supabase.from('planned_workouts').select('*').eq('user_id', userId).order('date', { ascending: false }),
-      supabase.from('workout_sessions').select('*').eq('user_id', userId).order('date_started', { ascending: false }),
-      supabase.from('exercise_notes').select('*').eq('user_id', userId),
-      supabase.from('metric_scans').select('*').eq('user_id', userId).order('date', { ascending: false }),
-      supabase.from('habit_logs').select('*').eq('user_id', userId).order('date', { ascending: false }),
+      readQuery(() => supabase.from('custom_exercises').select('*').eq('user_id', userId).order('name')),
+      readQuery(() => supabase.from('planned_workouts').select('*').eq('user_id', userId).order('date', { ascending: false })),
+      readQuery(() => supabase.from('workout_sessions').select('*').eq('user_id', userId).order('date_started', { ascending: false })),
+      readQuery(() => supabase.from('exercise_notes').select('*').eq('user_id', userId)),
+      readQuery(() => supabase.from('metric_scans').select('*').eq('user_id', userId).order('date', { ascending: false })),
+      readQuery(() => supabase.from('habit_logs').select('*').eq('user_id', userId).order('date', { ascending: false })),
     ]);
 
     const error = [customs, plans, sessions, notes, metrics, habits].find((result) => result.error)?.error;

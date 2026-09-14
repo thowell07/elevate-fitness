@@ -13,6 +13,8 @@ button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 input, textarea, select {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid #dbe3ef;
   border-radius: 14px;
   background: #fff;
@@ -139,7 +141,7 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 .stack { display: grid; gap: 12px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .three-col { display: grid; grid-template-columns: .65fr 1fr .75fr; gap: 10px; }
-.field { display: grid; gap: 6px; color: #475569; font-size: 12px; font-weight: 850; text-transform: uppercase; }
+.field { min-width: 0; grid-template-columns: minmax(0, 1fr); display: grid; gap: 6px; color: #475569; font-size: 12px; font-weight: 850; text-transform: uppercase; }
 .field input, .field textarea, .field select { text-transform: none; font-weight: 500; }
 
 .primary-button, .secondary-button, .ghost-button, .icon-button, .text-button {
@@ -644,3 +646,10 @@ summary { cursor: pointer; color: var(--ink); font-size: 14px; font-weight: 650;
 .exercise-library[open] > .section-heading { margin-top: 15px; }
 .exercise-rest-setting input, .plan-exercise-options input[type=number] { font-size: 16px; }
 .rest-controls button { min-height: 44px; }
+
+/* Safari date controls otherwise impose an intrinsic width on their grid track. */
+input[type=date] { appearance: none; -webkit-appearance: none; min-height: 48px; }
+input[type=date]::-webkit-date-and-time-value { text-align: left; min-width: 0; }
+.load-recovery .auth-panel { width: 100%; min-width: 0; }
+.load-recovery h1 { font-size: 25px; line-height: 1.15; }
+.load-recovery .primary-button { width: 100%; }

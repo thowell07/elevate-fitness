@@ -17,8 +17,9 @@ export const applyOperation = (bundle, operation) => {
 export const createOfflineStore = (remote, { storage = localStorage, online = () => navigator.onLine, execute = action => action(), withLock = (_key, work) => work() } = {}) => {
   const listeners = new Set();
   const running = new Map();
-  let status = { state: 'loading', pending: 0 };
-  const emit = next => { status = next; listeners.forEach(listener => listener(next)); };
+  let readState = 'loading';
+  let status = { state: 'loading', readState, pending: 0 };
+  const emit = next => { status = { ...next, readState }; listeners.forEach(listener => listener(status)); };
   const read = userId => {
     const raw = storage.getItem(PREFIX + userId);
     if (!raw) return { bundle: null, queue: [] };
@@ -56,6 +57,7 @@ export const createOfflineStore = (remote, { storage = localStorage, online = ()
     mode: remote.mode,
     subscribe(listener) { listeners.add(listener); listener(status); return () => listeners.delete(listener); },
     pending(userId) { return read(userId).queue.length; },
+    needsRefresh() { return readState !== 'ready'; },
     clear(userId) { if (!read(userId).queue.length) storage.removeItem(PREFIX + userId); },
     flush,
     async loadBundle(userId) {
@@ -67,11 +69,13 @@ export const createOfflineStore = (remote, { storage = localStorage, online = ()
         const current = read(userId);
         const bundle = current.queue.reduce(applyOperation, remoteBundle);
         write(userId, { ...current, bundle });
+        readState = 'ready';
         emit({ state: current.queue.length ? 'pending' : 'saved', pending: current.queue.length });
         return bundle;
       } catch (error) {
-        if (!cached.bundle) { emit({ state: 'error', pending: cached.queue.length }); throw error; }
+        if (!cached.bundle) { readState = 'error'; emit({ state: 'error', pending: cached.queue.length }); throw error; }
         const latest = read(userId);
+        readState = 'stale';
         emit({ state: online() ? 'pending' : 'offline', pending: latest.queue.length });
         return latest.bundle;
       }
