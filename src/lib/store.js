@@ -1,5 +1,7 @@
 import { supabase } from './supabase';
-import { attachWorkoutDetails, createWorkoutDetails, DEFAULT_WORKOUT_TYPE, extractWorkoutDetails } from './workoutDetails';
+import { todayISO } from './utils';
+import { fromPlanRow, fromSessionRow } from './workoutRows';
+import { attachWorkoutDetails, createWorkoutDetails, DEFAULT_WORKOUT_TYPE } from './workoutDetails';
 
 const emptyBundle = {
   customExercises: [],
@@ -22,7 +24,7 @@ const fromCustomRow = (row) => ({
   instructions: row.instructions || '',
   defaultSets: row.default_sets || 3,
   defaultReps: row.default_reps || '8-10',
-  defaultRestSeconds: row.default_rest_seconds || 90,
+  defaultRestSeconds: row.default_rest_seconds ?? 90,
   tracking: row.tracking || 'weight_reps',
   isCustom: true,
 });
@@ -38,7 +40,7 @@ const toCustomRow = (userId, exercise) => ({
   instructions: exercise.instructions || '',
   default_sets: Number(exercise.defaultSets || 3),
   default_reps: String(exercise.defaultReps || ''),
-  default_rest_seconds: Number(exercise.defaultRestSeconds || 90),
+  default_rest_seconds: Number(exercise.defaultRestSeconds ?? 90),
   tracking: exercise.tracking || 'weight_reps',
 });
 
@@ -57,45 +59,8 @@ export const createSupabaseStore = () => ({
     const error = [customs, plans, sessions, notes, metrics, habits].find((result) => result.error)?.error;
     if (error) throw error;
 
-    const plannedWorkouts = plans.data.map((row) => {
-      const { details, items } = extractWorkoutDetails(row.exercises, { title: row.title });
-      return {
-        id: row.id,
-        date: row.date,
-        title: details.workoutType,
-        workoutType: details.workoutType,
-        warmUp: details.warmUp,
-        coolDown: details.coolDown,
-        strength: details.strength,
-        wod: details.wod,
-        workoutDescription: details.workoutDescription,
-        crossFitWorkout: details.crossFitWorkout,
-        status: row.status,
-        notes: row.notes || '',
-        exercises: items,
-        updatedAt: row.updated_at,
-      };
-    });
-    const workoutSessions = sessions.data.map((row) => {
-      const { details, items } = extractWorkoutDetails(row.exercise_logs);
-      return {
-        id: row.id,
-        plannedWorkoutId: row.planned_workout_id,
-        dateStarted: row.date_started,
-        dateCompleted: row.date_completed,
-        status: row.status,
-        title: details.workoutType,
-        workoutType: details.workoutType,
-        warmUp: details.warmUp,
-        coolDown: details.coolDown,
-        strength: details.strength,
-        wod: details.wod,
-        workoutDescription: details.workoutDescription,
-        crossFitWorkout: details.crossFitWorkout,
-        notes: row.notes || '',
-        exerciseLogs: items,
-      };
-    });
+    const plannedWorkouts = plans.data.map(fromPlanRow);
+    const workoutSessions = sessions.data.map(fromSessionRow);
 
     return {
       customExercises: customs.data.map(fromCustomRow),
@@ -198,10 +163,11 @@ export const createPreviewStore = () => {
     plannedWorkouts: [
       {
         id: 'preview-plan',
-        date: new Date().toISOString().slice(0, 10),
+        date: todayISO(),
         title: DEFAULT_WORKOUT_TYPE,
         workoutType: DEFAULT_WORKOUT_TYPE,
-        warmUp: '',
+        routineName: 'Preview strength session',
+        warmUp: 'Easy movement before your first set.',
         coolDown: '',
         strength: '',
         wod: '',
@@ -216,6 +182,7 @@ export const createPreviewStore = () => {
             exerciseName: 'Dumbbell Bench Press',
             group: 'Push',
             position: 1,
+            restSeconds: 90,
             sets: [
               { id: 's1', setNumber: 1, plannedReps: '10', plannedWeight: '25', completed: false },
               { id: 's2', setNumber: 2, plannedReps: '10', plannedWeight: '25', completed: false },
@@ -225,6 +192,10 @@ export const createPreviewStore = () => {
       },
     ],
   };
+  try {
+    const saved = sessionStorage.getItem('elevate-preview-bundle-v2');
+    if (saved) bundle = JSON.parse(saved);
+  } catch { /* A fresh preview still works when no saved sample exists. */ }
   const persist = (next) => {
     bundle = {
       ...bundle,
@@ -233,6 +204,7 @@ export const createPreviewStore = () => {
       workoutSessions: sortDesc(next.workoutSessions || bundle.workoutSessions, 'dateStarted'),
       metricScans: sortDesc(next.metricScans || bundle.metricScans, 'date'),
     };
+    sessionStorage.setItem('elevate-preview-bundle-v2', JSON.stringify(bundle));
   };
   return {
     mode: 'preview',

@@ -22,6 +22,10 @@ import Trash2 from 'lucide-react/dist/esm/icons/trash-2.js';
 import X from 'lucide-react/dist/esm/icons/x.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
+import { createOfflineStore } from './lib/offlineStore';
+import { completedSetCount, isRoutine, makeRestTimer, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
+import RestTimer from './components/RestTimer';
+import PullUpProgress from './components/PullUpProgress';
 import { allowedEmails, isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
@@ -37,7 +41,7 @@ const emptyData = {
 };
 
 const navItems = [
-  { id: 'home', label: 'Home', icon: Home },
+  { id: 'home', label: 'Today', icon: Home },
   { id: 'plan', label: 'Track', icon: CalendarPlus },
   { id: 'history', label: 'History', icon: History },
   { id: 'habits', label: 'Habits', icon: CheckCircle2 },
@@ -110,7 +114,7 @@ const createPlanExercise = (exercise, position) => ({
       index
     )
   ),
-  restSeconds: Number(exercise.defaultRestSeconds || 90),
+  restSeconds: Number(exercise.defaultRestSeconds ?? 90),
 });
 
 const createSessionSet = (sourceSet, index, previousLog) => {
@@ -140,6 +144,7 @@ const createExerciseLog = (exercise, sessions) => {
     instructions: exercise.instructions || '',
     collapsed: false,
     notes: '',
+    restSeconds: Number(exercise.defaultRestSeconds ?? 90),
     sets: Array.from({ length: setCount }, (_, index) =>
       createSessionSet(
         {
@@ -160,7 +165,7 @@ const lastCompletedLog = (sessions, exerciseId) => {
     .sort((a, b) => String(b.dateCompleted || b.dateStarted).localeCompare(String(a.dateCompleted || a.dateStarted)));
   for (const session of completed) {
     const log = session.exerciseLogs?.find((item) => item.exerciseId === exerciseId);
-    if (log) return { session, log };
+    if (log?.sets?.some(set => set.completed)) return { session, log };
   }
   return null;
 };
@@ -217,6 +222,9 @@ const createSessionFromPlan = (plan, sessions) => {
   return {
     id: uid('session'),
     plannedWorkoutId: plan.id,
+    routineName: plan.routineName || '',
+    startedAt: new Date().toISOString(),
+    restTimer: null,
     dateStarted: sessionTimestampForDate(plan.date),
     dateCompleted: null,
     status: 'active',
@@ -238,6 +246,8 @@ const createSessionFromPlan = (plan, sessions) => {
             exerciseId: plannedExercise.exerciseId,
             exerciseName: plannedExercise.exerciseName,
             group: plannedExercise.group,
+            optional: Boolean(plannedExercise.optional),
+            restSeconds: plannedExercise.restSeconds,
             collapsed: false,
             notes: '',
             sets: plannedExercise.sets.map((set, index) => createSessionSet(set, index, previous?.log)),
@@ -466,91 +476,38 @@ const CustomExerciseForm = ({
   );
 };
 
-const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut }) => {
-  const today = todayISO();
-  const todaysPlan = data.plannedWorkouts.find((plan) => plan.date === today && plan.status !== 'completed');
-  const completedThisWeek = data.workoutSessions.filter((session) => {
-    if (session.status !== 'completed') return false;
-    const diff = Date.now() - new Date(session.dateCompleted || session.dateStarted).getTime();
-    return diff >= 0 && diff < 7 * 24 * 60 * 60 * 1000;
-  }).length;
-  const habitsToday = data.habitLogs.filter((log) => log.date === today && log.completed).length;
-  const legacyCount = legacySummary.workouts + legacySummary.habitDays + legacySummary.metrics;
-
-  return (
-    <div className="screen">
-      <header className="hero">
-        <Logo />
-        <p>Plan the work. Track the work. Keep the data.</p>
-      </header>
-
-      {storeMode === 'preview' && (
-        <section className="info-strip">
-          <Settings size={17} />
-          <span>Preview mode is not backed up. Add Supabase env vars to make cloud storage the source of truth.</span>
-        </section>
-      )}
-
-      {legacyCount > 0 && (
-        <section className="panel highlight-panel">
-          <h2>Legacy Elevate data found</h2>
-          <p>{legacySummary.workouts} workouts, {legacySummary.habitDays} habit days, and {legacySummary.metrics} InBody scans can be imported into the new cloud model.</p>
-          <button className="secondary-button" onClick={importLegacy}><RefreshCw size={17} /> Import legacy data</button>
-        </section>
-      )}
-
-      <section className="panel plan-card">
-        <div>
-          <span className="eyebrow">Today</span>
-          <h1>{todaysPlan ? todaysPlan.title : 'No workout planned yet'}</h1>
-          <p>{todaysPlan ? `${todaysPlan.exercises.length} exercises ready` : 'Build a plan or start from the exercise database.'}</p>
-        </div>
-        <div className="button-row">
-          <button className="primary-button" onClick={() => (todaysPlan ? startPlan(todaysPlan) : setActiveTab('plan'))}>
-            <Dumbbell size={18} /> {todaysPlan ? 'Start workout' : 'Plan today'}
-          </button>
-          <button className="icon-button" onClick={exportData} aria-label="Export JSON"><Download size={19} /></button>
-        </div>
-      </section>
-
-      <div className="stat-grid">
-        <section className="stat-card"><strong>{completedThisWeek}</strong><span>Workouts this week</span></section>
-        <section className="stat-card"><strong>{habitsToday}/{defaultHabits.length}</strong><span>Habits today</span></section>
-      </div>
-
-      <section className="panel">
-        <div className="section-heading">
-          <h2>Recent activity</h2>
-          <button onClick={() => setActiveTab('history')}>View all</button>
-        </div>
-        {sortSessionsByWorkoutDateDesc(data.workoutSessions.filter((session) => session.status === 'completed')).slice(0, 3).map((session) => (
-          <div className="activity-row" key={session.id}>
-            <Dumbbell size={18} />
-            <span>
-              <strong>{session.exerciseLogs?.[0]?.exerciseName || session.workoutType || 'Workout'}</strong>
-              <small>{formatDate(session.dateCompleted || session.dateStarted)} / {isFreeformWorkout(session.workoutType || session.title) ? String(session.workoutType || 'Workout') + ' log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</small>
-            </span>
-          </div>
-        ))}
-        {!data.workoutSessions.some((session) => session.status === 'completed') && <p className="empty">No completed workouts yet.</p>}
-      </section>
-
-      {!preview && (
-        <section className="panel account-panel">
-          <span>
-            <strong>Account</strong>
-            <small>Private Elevate access</small>
-          </span>
-          <button className="secondary-button" onClick={onSignOut}><LogOut size={17} /> Sign out</button>
-        </section>
-      )}
-    </div>
-  );
+const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut, session, resumeSession, reviewPlan, saveRoutine }) => {
+  const todaysPlan = data.plannedWorkouts.find(plan => plan.date === todayISO() && plan.status === 'planned');
+  const completed = sortSessionsByWorkoutDateDesc(data.workoutSessions.filter(s => s.status === 'completed'));
+  const unfinished = resumableSessions(data.workoutSessions);
+  const routines = data.plannedWorkouts.filter(isRoutine);
+  const recentCount = completed.filter(s => { const days = (Date.now() - new Date(s.dateCompleted || s.dateStarted)) / 86400000; return days >= 0 && days < 7; }).length;
+  return <div className="screen today-screen">
+    <header className="today-header"><Logo compact /><span>{formatDate(todayISO())}</span></header>
+    {preview && <div className="info-strip">Preview · Sample data stays in this tab. No cloud writes.</div>}
+    {(legacySummary.workouts + legacySummary.habitDays + legacySummary.metrics) > 0 && <section className="panel"><h2>Earlier Elevate data found</h2><button className="secondary-button" onClick={importLegacy}>Import legacy data</button></section>}
+    <section className="today-primary">
+      <span className="eyebrow">{session ? 'Pick up where you left off' : 'Make time for yourself'}</span>
+      <h1>{session ? workoutName(session) : todaysPlan ? workoutName(todaysPlan) : 'Ready when you are'}</h1>
+      <p>{session ? `${completedSetCount(session)} ${completedSetCount(session) === 1 ? 'set' : 'sets'} checked · ${formatDate(session.dateStarted)}` : todaysPlan ? `${todaysPlan.exercises.length} ${todaysPlan.exercises.length === 1 ? 'exercise' : 'exercises'} in your plan` : 'Start with a saved routine or build today’s session.'}</p>
+      <button className="primary-button full-width" onClick={() => session ? resumeSession(session) : todaysPlan ? startPlan(todaysPlan) : setActiveTab('plan')}><Dumbbell size={19} />{session ? 'Resume workout' : todaysPlan ? 'Start workout' : 'Plan a workout'}</button>
+      {todaysPlan && !session && <button className="text-button" onClick={() => reviewPlan(todaysPlan)}>Review or adjust plan</button>}
+    </section>
+    <div className="week-line"><strong>{recentCount}</strong><span>{recentCount === 1 ? 'completed session' : 'completed sessions'} in the last 7 days</span><button className="text-button" onClick={() => setActiveTab('history')}>History</button></div>
+    <section className="routines-section"><div className="section-heading"><h2>Your routines</h2><span>{routines.length} saved</span></div>
+      {routines.map(routine => <div className="routine-row" key={routine.id}><div><strong>{workoutName(routine)}</strong><small>{routine.exercises.length ? `${routine.exercises.length} ${routine.exercises.length === 1 ? 'exercise' : 'exercises'}` : routine.workoutType}</small></div><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(routine))}>Use routine</button></div>)}
+      {!routines.length && <p className="muted">Save a workout you like, then make it yours again.</p>}
+      {completed[0] && <div className="recent-repeat"><span><strong>Repeat your last workout</strong><small>{workoutName(completed[0])} · {formatDate(completed[0].dateCompleted || completed[0].dateStarted)}</small></span><div className="button-row"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(completed[0]))}>Review repeat</button><button className="text-button" onClick={() => saveRoutine(completed[0])}>Save routine</button></div></div>}
+    </section>
+    <PullUpProgress sessions={data.workoutSessions} />
+    {unfinished.filter(item => item.id !== session?.id).length > 0 && <details className="panel"><summary>Other unfinished sessions</summary>{unfinished.filter(item => item.id !== session?.id).map(item => <div className="routine-row" key={item.id}><span>{workoutName(item)}<small>{formatDate(item.dateStarted)} · {completedSetCount(item)} sets checked</small></span><button className="text-button" onClick={() => resumeSession(item)}>Resume</button></div>)}</details>}
+    <div className="account-tools"><button className="text-button" onClick={exportData}><Download size={16} />Export data</button>{!preview && <button className="text-button" onClick={onSignOut}>Sign out</button>}</div>
+  </div>;
 };
 
-const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) => {
-  const [date, setDate] = useState(todayISO());
-  const existingPlan = data.plannedWorkouts.find((plan) => plan.date === date && plan.status !== 'completed');
+const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, draft, saveRoutine }) => {
+  const [date, setDate] = useState(draft?.date || todayISO());
+  const existingPlan = draft?.date === date ? draft : data.plannedWorkouts.find((plan) => plan.date === date && plan.status === 'planned');
   const [workoutType, setWorkoutType] = useState(normalizeWorkoutType(existingPlan?.workoutType || existingPlan?.title || DEFAULT_WORKOUT_TYPE));
   const [warmUp, setWarmUp] = useState(existingPlan?.warmUp || '');
   const [coolDown, setCoolDown] = useState(existingPlan?.coolDown || '');
@@ -560,9 +517,10 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
   const [workoutDescription, setWorkoutDescription] = useState(existingPlan?.workoutDescription || existingPlan?.crossFitWorkout || '');
   const [notes, setNotes] = useState(existingPlan?.notes || '');
   const [plannedExercises, setPlannedExercises] = useState(existingPlan?.exercises || []);
+  const [planSaved, setPlanSaved] = useState(false);
 
   useEffect(() => {
-    const plan = data.plannedWorkouts.find((item) => item.date === date && item.status !== 'completed');
+    const plan = draft?.date === date ? draft : data.plannedWorkouts.find((item) => item.date === date && item.status === 'planned');
     setWorkoutType(normalizeWorkoutType(plan?.workoutType || plan?.title || DEFAULT_WORKOUT_TYPE));
     setWarmUp(plan?.warmUp || '');
     setCoolDown(plan?.coolDown || '');
@@ -572,7 +530,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
     setWorkoutDescription(plan?.workoutDescription || plan?.crossFitWorkout || '');
     setNotes(plan?.notes || '');
     setPlannedExercises(plan?.exercises || []);
-  }, [date, data.plannedWorkouts]);
+  }, [date, draft]);
 
   const freeform = isFreeformWorkout(workoutType);
   const crossFit = isCrossFitWorkout(workoutType);
@@ -603,6 +561,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       id: existingPlan?.id || uid('plan'),
       date,
       title: workoutType,
+      routineName: existingPlan?.routineName || '',
       workoutType,
       warmUp: freeform ? '' : warmUp,
       coolDown: freeform ? '' : coolDown,
@@ -614,15 +573,17 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
       status: 'planned',
       exercises: freeform ? [] : plannedExercises.map((exercise, index) => ({ ...exercise, position: index + 1 })),
     };
-    await savePlan(plan);
-    return plan;
+    const saved = await savePlan(plan);
+    setPlanSaved(Boolean(saved));
+    return saved ? plan : null;
   };
 
-  const canSavePlan = freeform || plannedExercises.length > 0;
+  const canSavePlan = freeform ? Boolean(strength.trim() || wod.trim() || workoutDescription.trim()) : plannedExercises.length > 0;
 
   return (
     <div className="screen">
-      <ScreenHeader icon={CalendarPlus} title="Workout plan" subtitle="Build the session before you start." />
+      <ScreenHeader icon={CalendarPlus} title={draft?.routineName || "Workout plan"} subtitle="Review your plan, then make it yours." />
+      {planSaved && <p className="notice success" role="status">Plan saved</p>}
       <section className="panel stack">
         <div className="plan-fields">
           <PlanDateField value={date} onChange={setDate} />
@@ -632,6 +593,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
             </select>
           </Field>
         </div>
+        <details className="planner-details" open={freeform || undefined}><summary>{freeform ? 'Workout details' : 'Warm up, cool down & notes'}</summary>
         {!freeform && (
           <div className="plan-text-grid">
             <Field label="Warm up">
@@ -658,49 +620,53 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan }) =
           </Field>
         )}
         <Field label="Workout notes"><textarea value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Focus, constraints, or reminders for this workout" /></Field>
+        </details>
         {freeform && (
           <div className="button-row">
-            <button className="secondary-button" onClick={persistPlan}><Check size={17} /> Save plan</button>
-            <button className="primary-button" onClick={async () => startPlan(await persistPlan())}><Dumbbell size={18} /> Start</button>
+            <button className="secondary-button" onClick={persistPlan} disabled={!canSavePlan}><Check size={17} /> Save plan</button>
+            <button className="primary-button" disabled={!canSavePlan} onClick={async () => { const plan = await persistPlan(); if (plan) startPlan(plan); }}><Dumbbell size={18} /> Start</button>
           </div>
         )}
       </section>
 
       {!freeform && (
         <>
-          <section className="panel">
-            <div className="section-heading"><h2>Exercise database</h2><span>{exercises.length} exercises</span></div>
-            <ExerciseSearch exercises={exercises} onAdd={addExercise} />
-          </section>
-          <CustomExerciseForm onSave={saveCustomExercise} />
-
           <section className="panel stack">
             <div className="section-heading"><h2>Planned exercises</h2><span>{plannedExercises.length}</span></div>
+            {plannedExercises.some(ex => ex.optional) && <button className="secondary-button" onClick={() => setPlannedExercises(items => items.filter(ex => !ex.optional))}>Short version · Remove optional exercises</button>}
             {plannedExercises.map((exercise) => (
               <div className="planned-exercise" key={exercise.id}>
                 <div className="planned-title">
                   <span><strong>{exercise.exerciseName}</strong><small>{exercise.group}</small></span>
                   <button className="icon-button subtle" onClick={() => removeExercise(exercise.id)} aria-label="Remove exercise"><X size={17} /></button>
                 </div>
+                <div className="plan-exercise-options"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${exercise.exerciseName}`} value={exercise.restSeconds ?? exercises.find(e => e.id === exercise.exerciseId)?.defaultRestSeconds ?? 90} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, restSeconds: Math.min(900, Math.max(0, Number(event.target.value))) } : ex))} /> sec</label><label><input type="checkbox" checked={Boolean(exercise.optional)} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, optional: event.target.checked } : ex))} /> Optional</label></div>
                 <div className="set-table compact">
                   <div className="set-head"><span>Set</span><span>Target</span><span>Weight</span></div>
                   {exercise.sets.map((set, index) => (
                     <div className="set-row" key={set.id}>
                       <strong>{index + 1}</strong>
-                      <input value={set.plannedReps} onChange={(event) => updateSet(exercise.id, set.id, { plannedReps: event.target.value })} placeholder="8-10" />
-                      <input value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lbs" />
+                      <input aria-label={`Target for ${exercise.exerciseName} set ${index + 1}`} value={set.plannedTime || set.plannedReps} onChange={(event) => updateSet(exercise.id, set.id, exercises.find(e => e.id === exercise.exerciseId)?.tracking === 'time' ? { plannedTime: event.target.value, plannedReps: '' } : { plannedReps: event.target.value })} placeholder="Reps or time" />
+                      <input aria-label={`Weight for ${exercise.exerciseName} set ${index + 1}`} value={set.plannedWeight} onChange={(event) => updateSet(exercise.id, set.id, { plannedWeight: event.target.value })} placeholder="lbs" />
                     </div>
                   ))}
                 </div>
                 <button className="text-button" onClick={() => addSet(exercise.id)}><Plus size={16} /> Add set</button>
               </div>
             ))}
-            {!plannedExercises.length && <p className="empty">Search above to add exercises to the plan.</p>}
+            {!plannedExercises.length && <p className="empty">Choose Add an exercise below to build your session.</p>}
+            <button className="text-button" disabled={!canSavePlan} onClick={async () => { const plan = await persistPlan(); if (plan) saveRoutine(plan); }}>Save as routine</button>
             <div className="button-row">
               <button className="secondary-button" onClick={persistPlan} disabled={!canSavePlan}><Check size={17} /> Save plan</button>
-              <button className="primary-button" disabled={!canSavePlan} onClick={async () => startPlan(await persistPlan())}><Dumbbell size={18} /> Start</button>
+              <button className="primary-button" disabled={!canSavePlan} onClick={async () => { const plan = await persistPlan(); if (plan) startPlan(plan); }}><Dumbbell size={18} /> Start</button>
             </div>
           </section>
+          <details className="panel exercise-library"><summary>Add an exercise</summary>
+            <div className="section-heading"><h2>Exercise database</h2><span>{exercises.length} exercises</span></div>
+            <ExerciseSearch exercises={exercises} onAdd={addExercise} />
+          </details>
+          <CustomExerciseForm onSave={saveCustomExercise} />
+
         </>
       )}
     </div>
@@ -715,10 +681,19 @@ const ScreenHeader = ({ icon: IconComponent, title, subtitle }) => (
   </header>
 );
 
+const SessionElapsed = ({ startedAt }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  if (!startedAt) return null;
+  const minutes = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 60000));
+  return <p className="session-elapsed">{minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`} since start</p>;
+};
+
 const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, saveExerciseNote, saveCustomExercise, clearActive }) => {
   const [detailTabs, setDetailTabs] = useState({});
   const [swapFor, setSwapFor] = useState(null);
   const [addingExercise, setAddingExercise] = useState(false);
+  const [finishing, setFinishing] = useState(false);
   const freeform = isFreeformWorkout(session.workoutType || session.title);
   const crossFit = isCrossFitWorkout(session.workoutType || session.title);
   const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
@@ -773,33 +748,20 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
     setAddingExercise(false);
   };
   const saveAndAddCustomExercise = async (exercise) => {
-    await saveCustomExercise(exercise);
-    addExercise(exercise);
+    if (await saveCustomExercise(exercise)) addExercise(exercise);
   };
   const swapExercise = (logId, exercise) => {
-    patchLog(logId, (log) => ({
-      ...log,
-      exerciseId: exercise.id,
-      exerciseName: exercise.name,
-      group: exercise.group,
-      equipment: exercise.equipment || '',
-      instructions: exercise.instructions || '',
-      sets: log.sets.map((set, index) => {
-        const previous = lastCompletedLog(data.workoutSessions, exercise.id);
-        return normalizeSet(
-          {
-            ...set,
-            previousSnapshot: previous?.log?.sets?.[index] ? performedSetSummary(previous.log.sets[index]) : '',
-          },
-          index
-        );
-      }),
-    }));
+    const old = session.exerciseLogs.find(log => log.id === logId);
+    if (old?.sets.some(set => set.completed)) {
+      addExercise(exercise);
+    } else {
+      const replacement = createExerciseLog(exercise, data.workoutSessions);
+      patchLog(logId, () => ({ ...replacement, id: logId }));
+    }
     setSwapFor(null);
   };
   const saveAndSwapCustomExercise = async (logId, exercise) => {
-    await saveCustomExercise(exercise);
-    swapExercise(logId, exercise);
+    if (await saveCustomExercise(exercise)) swapExercise(logId, exercise);
   };
   const removeExercise = (logId) => {
     const log = session.exerciseLogs.find((item) => item.id === logId);
@@ -818,10 +780,117 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
     if (swapFor === logId) setSwapFor(null);
   };
 
+  const toggleSet = (log, set, index) => {
+    const exercise = findExercise(exercises, log.exerciseId) || log;
+    if (!set.completed) {
+      const performed = exercise.tracking === 'time' ? set.actualTime : set.actualReps;
+      if (!String(performed || '').trim()) return;
+    }
+    const completed = !set.completed;
+    const restTimer = completed ? makeRestTimer(log.id, set.id, restSecondsFor(log, exercise))
+      : session.restTimer?.setId === set.id ? null : session.restTimer;
+    updateSession({ ...session, restTimer, exerciseLogs: session.exerciseLogs.map(item => item.id === log.id ? { ...item, sets: item.sets.map((row, rowIndex) => rowIndex === index ? { ...row, completed } : row) } : item) });
+  };
+  const finish = async () => {
+    if (finishing) return;
+    setFinishing(true);
+    try { await finishSession({ ...session, restTimer: null, status: 'completed', dateCompleted: completionTimestampForSession(session) }); }
+    finally { setFinishing(false); }
+  };
   return (
-    <div className="screen">
-      <ScreenHeader icon={ListChecks} title="Active workout" subtitle={freeform ? 'Log the full workout exactly as performed.' : 'Check off each set as you go.'} />
-      <section className="panel workout-note stack">
+    <div className="screen active-workout-screen">
+      <ScreenHeader icon={ListChecks} title={workoutName(session)} subtitle={freeform ? 'Log what you did.' : `${completedSetCount(session)} of ${exerciseLogs.reduce((n, log) => n + log.sets.length, 0)} sets checked`} />
+      <SessionElapsed startedAt={session.startedAt} />
+      {!freeform && session.warmUp && <details className="warmup-cue" open={completedSetCount(session) === 0}><summary>Warm up</summary><p>{session.warmUp}</p></details>}
+      {!freeform && <div className="workout-progress" role="progressbar" aria-label="Completed sets" aria-valuemin={0} aria-valuemax={exerciseLogs.reduce((n, log) => n + log.sets.length, 0)} aria-valuenow={completedSetCount(session)}><span style={{ width: `${100 * completedSetCount(session) / Math.max(1, exerciseLogs.reduce((n, log) => n + log.sets.length, 0))}%` }} /></div>}
+      {!freeform && exerciseLogs.map((log) => {
+        const exercise = findExercise(exercises, log.exerciseId) || log;
+        const tab = detailTabs[log.id] || '';
+        return (
+          <section className={`exercise-card ${log.sets.every(s => s.completed) ? 'exercise-finished' : ''}`} key={log.id}>
+            <button className="exercise-card-head" onClick={() => patchLog(log.id, (item) => ({ ...item, collapsed: !item.collapsed }))}>
+              <span>
+                <strong>{log.exerciseName}</strong>
+                <small>{log.sets.filter(set => set.completed).length}/{log.sets.length} sets · {exercise.equipment || log.group}</small>
+              </span>
+              {log.collapsed ? <ChevronDown size={19} /> : <ChevronUp size={19} />}
+            </button>
+            {!log.collapsed && (
+              <div className="exercise-card-body">
+                <div className="exercise-rest-setting"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${log.exerciseName}`} value={restSecondsFor(log, exercise)} onChange={event => patchLog(log.id, item => ({ ...item, restSeconds: Math.min(900, Math.max(0, Number(event.target.value))) }))} /> sec</label><span>{log.exerciseName === 'Assisted Pull-Up' ? 'Weight is assistance' : 'After each set'}</span></div>
+                {data.exerciseNotes[log.exerciseId] && <p className="setup-cue">{data.exerciseNotes[log.exerciseId]}</p>}
+                <div className="set-table">
+                  <div className="set-head"><span>Set</span><span>Previous</span><span>Today</span><span></span></div>
+                  {log.sets.map((set, index) => (
+                    <div className={`set-row active-set-row ${set.completed ? 'set-done' : ''}`} key={set.id}>
+                      <strong>{index + 1}</strong>
+                      <small>{set.previousSnapshot || '—'}</small>
+                      <div className={`today-inputs ${exercise.tracking === 'time' || exercise.tracking === 'bodyweight_reps' ? 'single-input' : ''}`}>
+                        {exercise.tracking === 'time' ? <input aria-label={`Time for ${log.exerciseName} set ${index + 1}`} value={set.actualTime} onChange={event => patchSet(log.id, set.id, index, { actualTime: event.target.value })} placeholder="e.g. 30 min" /> : <>
+                          {exercise.tracking !== 'bodyweight_reps' && <input aria-label={`${log.exerciseName === 'Assisted Pull-Up' ? 'Assistance' : 'Weight'} for ${log.exerciseName} set ${index + 1}`} value={set.actualWeight} onChange={event => patchSet(log.id, set.id, index, { actualWeight: event.target.value })} placeholder="lb" inputMode="decimal" />}
+                          <input aria-label={`Reps for ${log.exerciseName} set ${index + 1}`} value={set.actualReps} onChange={event => patchSet(log.id, set.id, index, { actualReps: event.target.value })} placeholder="reps" inputMode="decimal" />
+                        </>}
+                      </div>
+                      <button className={`check-button ${set.completed ? 'done' : ''}`} disabled={!set.completed && !String((exercise.tracking === 'time' ? set.actualTime : set.actualReps) || '').trim()} onClick={() => toggleSet(log, set, index)} aria-pressed={set.completed} aria-label={`${set.completed ? 'Undo' : 'Complete'} ${log.exerciseName} set ${index + 1}`}><Check size={20} /></button>
+                    </div>
+                  ))}
+                </div>
+                <div className="button-row wrap">
+                  {exercise.tracking !== 'time' && exercise.tracking !== 'bodyweight_reps' && <button className="text-button" onClick={() => patchAllSetWeights(log.id, log.sets[0]?.actualWeight || '')}>Use first weight for all sets</button>}
+                  <button className="text-button" onClick={() => addSet(log.id)}><Plus size={16} /> Add set</button>
+                  <button className="text-button" onClick={() => setSwapFor(swapFor === log.id ? null : log.id)}><Repeat2 size={16} /> Swap exercise</button>
+                  <button className="text-button danger" onClick={() => removeExercise(log.id)}><Trash2 size={16} /> Remove</button>
+                </div>
+                {swapFor === log.id && (
+                  <div className="swap-panel stack">
+                    <ExerciseSearch exercises={exercises} compact onAdd={(exercise) => swapExercise(log.id, exercise)} />
+                    <CustomExerciseForm
+                      asPanel={false}
+                      title="New custom replacement"
+                      buttonLabel="Save and swap in"
+                      defaultGroup={log.group || 'Push'}
+                      onSave={(exercise) => saveAndSwapCustomExercise(log.id, exercise)}
+                    />
+                  </div>
+                )}
+                <div className="detail-tabs">
+                  <TabButton active={tab === 'how'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: tab === 'how' ? '' : 'how' })}><BookOpen size={16} /> How To</TabButton>
+                  <TabButton active={tab === 'history'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: tab === 'history' ? '' : 'history' })}><History size={16} /> History</TabButton>
+                  <TabButton active={tab === 'notes'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: tab === 'notes' ? '' : 'notes' })}><StickyNote size={16} /> My Notes</TabButton>
+                </div>
+                {tab === 'how' && <p className="detail-copy">{exercise.instructions || 'No instructions yet.'}</p>}
+                {tab === 'history' && <ExerciseHistory sessions={data.workoutSessions} exerciseId={log.exerciseId} />}
+                {tab === 'notes' && (
+                  <ExerciseNotes
+                    value={data.exerciseNotes[log.exerciseId] || ''}
+                    onSave={(note) => saveExerciseNote(log.exerciseId, note)}
+                  />
+                )}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {!freeform && (
+        <section className="panel active-add-panel">
+          <button className="section-toggle" onClick={() => setAddingExercise(!addingExercise)}>
+            <span><Plus size={18} /> Add exercise</span>
+            {addingExercise ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+          {addingExercise && (
+            <div className="stack active-add-body">
+              <ExerciseSearch exercises={exercises} compact onAdd={addExercise} />
+              <CustomExerciseForm
+                asPanel={false}
+                title="New custom exercise"
+                buttonLabel="Save and add"
+                onSave={saveAndAddCustomExercise}
+              />
+            </div>
+          )}
+        </section>
+      )}
+      <details className="panel workout-note" open={freeform || undefined}><summary>Session details & notes</summary><div className="stack">
         {!freeform && (
           <div className="plan-text-grid">
             <Field label="Warm up">
@@ -856,94 +925,10 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
         <Field label="Workout notes">
           <textarea value={session.notes || ''} onChange={(event) => updateSession({ ...session, notes: event.target.value })} placeholder="How did the session feel?" />
         </Field>
-      </section>
-      {!freeform && exerciseLogs.map((log) => {
-        const exercise = findExercise(exercises, log.exerciseId) || log;
-        const tab = detailTabs[log.id] || 'how';
-        return (
-          <section className="exercise-card" key={log.id}>
-            <button className="exercise-card-head" onClick={() => patchLog(log.id, (item) => ({ ...item, collapsed: !item.collapsed }))}>
-              <span>
-                <strong>{log.exerciseName}</strong>
-                <small>{log.group} / {exercise.equipment || 'Exercise'}</small>
-              </span>
-              {log.collapsed ? <ChevronDown size={19} /> : <ChevronUp size={19} />}
-            </button>
-            {!log.collapsed && (
-              <div className="exercise-card-body">
-                <div className="set-table">
-                  <div className="set-head"><span>Set</span><span>Previous</span><span>Today</span><span></span></div>
-                  {log.sets.map((set, index) => (
-                    <div className="set-row active-set-row" key={set.id}>
-                      <strong>{index + 1}</strong>
-                      <small>{set.previousSnapshot || 'New'}</small>
-                      <div className="today-inputs">
-                        <input value={set.actualWeight} onChange={(event) => patchAllSetWeights(log.id, event.target.value)} placeholder="lbs" inputMode="decimal" />
-                        <input value={set.actualReps} onChange={(event) => patchSet(log.id, set.id, index, { actualReps: event.target.value })} placeholder="reps" inputMode="decimal" />
-                      </div>
-                      <button className={`check-button ${set.completed ? 'done' : ''}`} onClick={() => patchSet(log.id, set.id, index, { completed: !set.completed })} aria-label="Toggle set complete">
-                        <Check size={18} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-                <div className="button-row wrap">
-                  <button className="text-button" onClick={() => addSet(log.id)}><Plus size={16} /> Add set</button>
-                  <button className="text-button" onClick={() => setSwapFor(swapFor === log.id ? null : log.id)}><Repeat2 size={16} /> Swap exercise</button>
-                  <button className="text-button danger" onClick={() => removeExercise(log.id)}><Trash2 size={16} /> Remove</button>
-                </div>
-                {swapFor === log.id && (
-                  <div className="swap-panel stack">
-                    <ExerciseSearch exercises={exercises} compact onAdd={(exercise) => swapExercise(log.id, exercise)} />
-                    <CustomExerciseForm
-                      asPanel={false}
-                      title="New custom replacement"
-                      buttonLabel="Save and swap in"
-                      defaultGroup={log.group || 'Push'}
-                      onSave={(exercise) => saveAndSwapCustomExercise(log.id, exercise)}
-                    />
-                  </div>
-                )}
-                <div className="detail-tabs">
-                  <TabButton active={tab === 'how'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: 'how' })}><BookOpen size={16} /> How To</TabButton>
-                  <TabButton active={tab === 'history'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: 'history' })}><History size={16} /> History</TabButton>
-                  <TabButton active={tab === 'notes'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: 'notes' })}><StickyNote size={16} /> My Notes</TabButton>
-                </div>
-                {tab === 'how' && <p className="detail-copy">{exercise.instructions || 'No instructions yet.'}</p>}
-                {tab === 'history' && <ExerciseHistory sessions={data.workoutSessions} exerciseId={log.exerciseId} />}
-                {tab === 'notes' && (
-                  <ExerciseNotes
-                    value={data.exerciseNotes[log.exerciseId] || ''}
-                    onSave={(note) => saveExerciseNote(log.exerciseId, note)}
-                  />
-                )}
-              </div>
-            )}
-          </section>
-        );
-      })}
-      {!freeform && (
-        <section className="panel active-add-panel">
-          <button className="section-toggle" onClick={() => setAddingExercise(!addingExercise)}>
-            <span><Plus size={18} /> Add exercise</span>
-            {addingExercise ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-          </button>
-          {addingExercise && (
-            <div className="stack active-add-body">
-              <ExerciseSearch exercises={exercises} compact onAdd={addExercise} />
-              <CustomExerciseForm
-                asPanel={false}
-                title="New custom exercise"
-                buttonLabel="Save and add"
-                onSave={saveAndAddCustomExercise}
-              />
-            </div>
-          )}
-        </section>
-      )}
+      </div></details>
       <div className="sticky-actions">
-        <button className="ghost-button" onClick={clearActive}>Close</button>
-        <button className="primary-button" onClick={() => finishSession({ ...session, status: 'completed', dateCompleted: completionTimestampForSession(session) })}>
+        <button className="ghost-button" onClick={clearActive}>Leave & resume</button>
+        <button className="primary-button" disabled={finishing || (!freeform && !completedSetCount(session))} onClick={finish}>
           <CheckCircle2 size={18} /> Finish workout
         </button>
       </div>
@@ -983,7 +968,7 @@ const ExerciseHistory = ({ sessions, exerciseId }) => {
   );
 };
 
-const HistoryView = ({ sessions, exportData, deleteSession }) => {
+const HistoryView = ({ sessions, exportData, deleteSession, reviewPlan, saveRoutine }) => {
   const completed = sortSessionsByWorkoutDateDesc(sessions.filter((session) => session.status === 'completed'));
   return (
     <div className="screen">
@@ -1012,7 +997,8 @@ const HistoryView = ({ sessions, exportData, deleteSession }) => {
                   </button>
                 </div>
               </div>
-              <p className="workout-type-label">{session.workoutType || 'Workout'}</p>
+              <p className="workout-type-label">{workoutName(session)}</p>
+              <div className="button-row history-repeat"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(session))}>Repeat workout</button><button className="text-button" onClick={() => saveRoutine(session)}>Save routine</button></div>
               {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
               {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
               {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
@@ -1238,6 +1224,19 @@ const MetricsView = ({ scans, saveMetricScan }) => {
   );
 };
 
+const RoutineDialog = ({ source, onClose, onSave }) => {
+  const dialog = useRef(null);
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (source) { setName(source.routineName || `${source.workoutType || source.title || 'My'} routine`); dialog.current?.showModal(); }
+    else dialog.current?.close();
+  }, [source]);
+  return <dialog className="routine-dialog" ref={dialog} onCancel={onClose}><form onSubmit={async event => { event.preventDefault(); if (busy || !name.trim()) return; setBusy(true); try { if (await onSave(name.trim())) onClose(); } finally { setBusy(false); } }}>
+    <h2>Keep this routine</h2><p>Save it once. Adjust it each time you train.</p><Field label="Routine name"><input autoFocus value={name} maxLength={60} onChange={event => setName(event.target.value)} /></Field><div className="button-row"><button type="button" className="ghost-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy || !name.trim()}>Save routine</button></div>
+  </form></dialog>;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [session, setSession] = useState(null);
@@ -1247,10 +1246,27 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [legacySummary, setLegacySummary] = useState({ workouts: 0, habitDays: 0, metrics: 0 });
-  const [authEpoch, setAuthEpoch] = useState(0);
+  const [syncStatus, setSyncStatus] = useState({ state: 'loading', pending: 0 });
+  const [draft, setDraft] = useState(null);
+  const [routineSource, setRoutineSource] = useState(null);
+  const [notice, setNotice] = useState('');
+  const startGuard = useRef(false);
+  const sessionRef = useRef(null);
   const hasLoadedRef = useRef(false);
 
-  const store = useMemo(() => (preview ? createPreviewStore() : createSupabaseStore()), [preview]);
+  const store = useMemo(() => createOfflineStore(preview ? createPreviewStore() : createSupabaseStore(), {
+    storage: preview ? sessionStorage : localStorage,
+    execute: async action => {
+      try { return await action(); }
+      catch (error) {
+        if (preview || !isAuthTokenError(error)) throw error;
+        const refreshed = await supabase.auth.refreshSession();
+        if (refreshed.error) throw error;
+        return action();
+      }
+    },
+    withLock: (key, work) => navigator.locks ? navigator.locks.request(key, work) : work(),
+  }), [preview]);
   const userId = preview ? 'preview-user' : user?.id;
   const exercises = useMemo(() => getAllExercises(data.customExercises), [data.customExercises]);
 
@@ -1285,10 +1301,12 @@ export default function App() {
     });
     const { data: listener } = supabase.auth.onAuthStateChange((event, authSession) => {
       setUser(authSession?.user || null);
-      if (event === 'TOKEN_REFRESHED') setAuthEpoch((epoch) => epoch + 1);
+
       if (event === 'SIGNED_OUT') {
         hasLoadedRef.current = false;
         setData(emptyData);
+        setSession(null);
+        sessionRef.current = null;
       }
     });
     return () => {
@@ -1298,7 +1316,7 @@ export default function App() {
   }, [preview]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || (!preview && !isAllowedEmail(user?.email))) return;
     let cancelled = false;
     // Only block the UI on the first load; token-refresh reloads happen silently.
     if (!hasLoadedRef.current) setLoading(true);
@@ -1307,6 +1325,9 @@ export default function App() {
         if (cancelled) return;
         hasLoadedRef.current = true;
         setData(bundle);
+        const restored = resumableSessions(bundle.workoutSessions)[0] || null;
+        setSession(restored);
+        sessionRef.current = restored;
         setError('');
       })
       .catch((loadError) => {
@@ -1318,25 +1339,37 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [store, userId, authEpoch]);
+  }, [store, userId]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0 });
   }, [activeTab]);
+
+  useEffect(() => store.subscribe(setSyncStatus), [store]);
+  useEffect(() => {
+    if (!userId || (!preview && !isAllowedEmail(user?.email))) return;
+    const retry = () => { if (!document.hidden) void store.flush(userId); };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', retry);
+    const interval = setInterval(retry, 15000);
+    return () => { window.removeEventListener('online', retry); document.removeEventListener('visibilitychange', retry); clearInterval(interval); };
+  }, [store, userId]);
 
   const saveData = async (action, nextData) => {
     setError('');
     setData((current) => ({ ...current, ...nextData }));
     try {
       await runWithAuthRetry(action);
+      return true;
     } catch (saveError) {
       setError(saveError.message || 'Save failed.');
       try {
         const fresh = await runWithAuthRetry(() => store.loadBundle(userId));
         setData(fresh);
       } catch {
-        // Keep the optimistic state on screen; the error banner already explains the failure.
+        // Keep the unsaved values available for export and correction.
       }
+      return false;
     }
   };
 
@@ -1346,38 +1379,54 @@ export default function App() {
     });
 
   const savePlan = async (plan) => {
-    await saveData(() => store.savePlannedWorkout(userId, plan), {
+    return saveData(() => store.savePlannedWorkout(userId, plan), {
       plannedWorkouts: [plan, ...data.plannedWorkouts.filter((item) => item.id !== plan.id)],
     });
   };
 
   const saveActiveSession = async (nextSession) => {
-    setSession(nextSession);
-    setData((current) => ({
-      ...current,
-      workoutSessions: [nextSession, ...current.workoutSessions.filter((item) => item.id !== nextSession.id)],
-    }));
+    // Device persistence completes before the view can claim a successful finish.
     try {
-      await runWithAuthRetry(() => store.saveSession(userId, nextSession));
+      await store.saveSession(userId, nextSession);
+      sessionRef.current = nextSession;
+      setSession(nextSession);
+      setData(current => ({ ...current, workoutSessions: [nextSession, ...current.workoutSessions.filter(item => item.id !== nextSession.id)] }));
+      setError('');
+      return true;
     } catch (saveError) {
       setError(saveError.message || 'Could not save active workout.');
+      return false;
     }
   };
-
-  const startPlan = async (plan) => {
-    const nextSession = createSessionFromPlan(plan, data.workoutSessions);
-    await saveActiveSession(nextSession);
-    setActiveTab('active');
+  const resumeSession = nextSession => { sessionRef.current = nextSession; setSession(nextSession); setActiveTab('active'); };
+  const reviewPlan = plan => { setDraft(plan); setActiveTab('plan'); setNotice(''); };
+  const startPlan = async plan => {
+    if (!plan || startGuard.current) return;
+    const existing = resumableSessions(data.workoutSessions).find(item => item.plannedWorkoutId === plan.id);
+    if (existing) return resumeSession(existing);
+    const current = sessionRef.current;
+    if (current?.status === 'active' && !window.confirm('You have an unfinished workout. Start this separate session? Your earlier session will remain available to resume.')) return;
+    startGuard.current = true;
+    try {
+      const nextSession = createSessionFromPlan(plan, data.workoutSessions);
+      if (await saveActiveSession(nextSession)) setActiveTab('active');
+    } finally { startGuard.current = false; }
   };
-
-  const finishSession = async (finished) => {
-    await saveActiveSession(finished);
+  const finishSession = async finished => {
+    if (!(await saveActiveSession(finished))) return;
     if (finished.plannedWorkoutId) {
-      const plan = data.plannedWorkouts.find((item) => item.id === finished.plannedWorkoutId);
-      if (plan) await savePlan({ ...plan, status: 'completed' });
+      const plan = data.plannedWorkouts.find(item => item.id === finished.plannedWorkoutId);
+      if (plan && !(await savePlan({ ...plan, status: 'completed' }))) return;
     }
-    setSession(null);
+    setSession(null); sessionRef.current = null; setDraft(null);
+    setNotice('Workout complete. Your effort is on the record.');
     setActiveTab('history');
+  };
+  const persistRoutine = async name => {
+    const routine = { ...repeatAsPlan(routineSource), id: uid('routine'), status: 'routine', routineName: name };
+    if (!isFreeformWorkout(routine.workoutType) && !routine.exercises.length) { setError('Complete at least one set before saving this as a routine.'); return false; }
+    if (await savePlan(routine)) { setNotice(`“${name}” saved to your routines.`); return true; }
+    return false;
   };
 
   const deleteWorkoutSession = async (workoutSession) => {
@@ -1442,10 +1491,12 @@ export default function App() {
   };
 
   const signOut = async () => {
-    const message = session
-      ? 'Sign out of Elevate? Your active workout has been saved, but you will leave this session view.'
-      : 'Sign out of Elevate?';
-    if (window.confirm(message)) await supabase.auth.signOut();
+    await store.flush(userId);
+    if (store.pending(userId)) { setError('Your changes are saved on this device. Reconnect and sync before signing out.'); return; }
+    if (window.confirm('Sign out of Elevate? Your synced workouts will remain in your account.')) {
+      store.clear(userId);
+      await supabase.auth.signOut();
+    }
   };
 
   if (loading) return <main className="loading-screen"><Logo /><p>Loading Elevate...</p></main>;
@@ -1464,13 +1515,19 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${session?.restTimer ? 'has-rest-timer' : ''}`}>
       <main className="phone-frame">
-        {error && <div className="error-banner">{error}</div>}
+        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{['pending', 'offline'].includes(syncStatus.state) && <button onClick={() => store.flush(userId)}>Retry sync</button>}</div>
+        {error && <div className="error-banner" role="alert">{error}<button className="text-button" onClick={exportData}>Export data</button></div>}
+        {notice && <div className="notice success" role="status">{notice}<button className="text-button" onClick={() => setNotice('')} aria-label="Dismiss message">Dismiss</button></div>}
         {activeTab === 'home' && (
           <HomeDashboard
             data={data}
-            setActiveTab={setActiveTab}
+            session={session}
+            resumeSession={resumeSession}
+            reviewPlan={reviewPlan}
+            saveRoutine={setRoutineSource}
+            setActiveTab={tab => { if (tab === 'plan') setDraft(null); setActiveTab(tab); }}
             startPlan={startPlan}
             exportData={exportData}
             storeMode={store.mode}
@@ -1482,6 +1539,9 @@ export default function App() {
         )}
         {activeTab === 'plan' && (
           <Planner
+            key={draft?.id || 'planner'}
+            draft={draft}
+            saveRoutine={setRoutineSource}
             data={data}
             exercises={exercises}
             savePlan={savePlan}
@@ -1501,15 +1561,17 @@ export default function App() {
             clearActive={() => setActiveTab('home')}
           />
         )}
-        {activeTab === 'history' && <HistoryView sessions={data.workoutSessions} exportData={exportData} deleteSession={deleteWorkoutSession} />}
+        {activeTab === 'history' && <HistoryView sessions={data.workoutSessions} exportData={exportData} deleteSession={deleteWorkoutSession} reviewPlan={reviewPlan} saveRoutine={setRoutineSource} />}
         {activeTab === 'habits' && <HabitTracker habitLogs={data.habitLogs} saveHabitLog={saveHabitLog} />}
         {activeTab === 'metrics' && <MetricsView scans={data.metricScans} saveMetricScan={saveMetricScan} />}
       </main>
-      <nav className="bottom-nav">
+      <RestTimer session={session} updateSession={saveActiveSession} openWorkout={() => setActiveTab('active')} />
+      <RoutineDialog source={routineSource} onClose={() => setRoutineSource(null)} onSave={persistRoutine} />
+      <nav className="bottom-nav" aria-label="Main navigation">
         {navItems.map((item) => {
           const IconComponent = item.icon;
           return (
-            <button key={item.id} className={activeTab === item.id ? 'active' : ''} onClick={() => setActiveTab(item.id)}>
+            <button key={item.id} className={activeTab === item.id ? 'active' : ''} onClick={() => { if (item.id === 'plan') setDraft(null); setNotice(''); setActiveTab(item.id); }}>
               <IconComponent size={21} />
               <span>{item.label}</span>
             </button>
