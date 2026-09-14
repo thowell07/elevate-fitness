@@ -18,7 +18,10 @@ export const slug = (value) =>
 
 export const formatDate = (value) => {
   if (!value) return '';
-  return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, {
+  const text = String(value);
+  // Timestamps render in local time (8:30pm ET is still today); plain dates parse at local noon.
+  const date = text.includes('T') ? new Date(text) : new Date(`${text.slice(0, 10)}T12:00:00`);
+  return date.toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',

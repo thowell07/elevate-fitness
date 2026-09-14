@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createOfflineStore } from '../src/lib/offlineStore.js';
+import { createOfflineStore, isTerminalWriteError } from '../src/lib/offlineStore.js';
 const memory = () => { const items = new Map(); return { getItem:key=>items.get(key)||null, setItem:(key,value)=>items.set(key,value), removeItem:key=>items.delete(key) }; };
 const bundle = () => ({workoutSessions:[],plannedWorkouts:[],customExercises:[],metricScans:[],habitLogs:[],exerciseNotes:{}});
 const fixture = () => {
@@ -77,4 +77,69 @@ test('cached history remains visible but stale after failed refresh and empty sa
  const reopened=createOfflineStore(f.remote,{storage,online:()=>true});let status;reopened.subscribe(s=>status=s);
  const data=await reopened.loadBundle('u');assert.equal(data.metricScans.length,1);assert.equal(status.readState,'stale');
  await reopened.flush('u');assert.equal(status.readState,'stale');assert.equal(reopened.needsRefresh(),true);
+});
+test('a rejected write moves aside so later writes still sync', async () => {
+ const storage=memory(), f=fixture();let status;
+ f.remote.saveMetricScan=async()=>{throw Object.assign(new Error('invalid input syntax for type numeric: "185 lbs"'),{code:'22P02'});};
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});store.subscribe(s=>status=s);
+ await store.loadBundle('u');
+ await store.saveMetricScan('u',{id:'scan',date:'2026-09-14',weight:'185 lbs'});
+ await store.saveSession('u',{id:'s',value:1});
+ await store.flush('u');
+ assert.equal(store.pending('u'),0);assert.equal(f.writes.length,1);
+ assert.equal(store.failed('u').length,1);assert.equal(status.dead,1);assert.match(status.error,/185 lbs/);
+ store.clear('u');assert.equal(store.failed('u').length,1);
+ store.discardFailed('u');assert.equal(store.failed('u').length,0);assert.equal(status.dead,0);
+});
+test('network, auth, and row-security failures keep retrying', async () => {
+ const storage=memory(), f=fixture();
+ const errors=[new TypeError('Failed to fetch'),Object.assign(new Error('new row violates row-level security policy'),{code:'42501'}),Object.assign(new Error('JWT expired'),{code:'PGRST301'}),Object.assign(new Error('Service Unavailable'),{status:503})];
+ let calls=0;f.remote.saveSession=async()=>{throw errors[calls++%errors.length];};
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});
+ await store.saveSession('u',{id:'s',value:1});
+ for (let i=0;i<4;i+=1) { await store.flush('u');assert.equal(store.pending('u'),1);assert.equal(store.failed('u').length,0); }
+});
+test('write errors are terminal only for bad data', () => {
+ assert.equal(isTerminalWriteError({code:'22P02'}),true);assert.equal(isTerminalWriteError({code:'23502'}),true);assert.equal(isTerminalWriteError({code:'PGRST102'}),true);assert.equal(isTerminalWriteError({status:400}),true);
+ for (const error of [{code:'42501'},{code:'42703'},{code:'42P01'},{code:'PGRST204'},{code:'PGRST301'},{status:401},{status:408},{status:429},{status:500},new TypeError('Failed to fetch'),{message:'JWT expired'}]) assert.equal(isTerminalWriteError(error),false);
+});
+test('repeated failures for one record keep one entry and discard removes one change', async () => {
+ const storage=memory(), f=fixture();
+ f.remote.saveSession=async()=>{throw Object.assign(new Error('null value in column "status"'),{code:'23502'});};
+ f.remote.saveMetricScan=async()=>{throw Object.assign(new Error('bad scan'),{code:'22P02'});};
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});
+ await store.saveSession('u',{id:'s',value:1});await store.flush('u');
+ await store.saveSession('u',{id:'s',value:2});await store.flush('u');
+ await store.saveMetricScan('u',{id:'scan'});await store.flush('u');
+ assert.deepEqual(store.failed('u').map(op=>op.target),['s','scan']);assert.equal(store.failed('u')[0].args[0].value,2);
+ store.discardFailed('u');assert.deepEqual(store.failed('u').map(op=>op.target),['s']);
+});
+test('a save during an in-flight account read survives in the bundle and the device cache', async () => {
+ const storage=memory(), f=fixture();let started,release;
+ const readStarted=new Promise(resolve=>{started=resolve;});
+ f.remote.loadBundle=async()=>{const snapshot=structuredClone(f.data);started();await new Promise(resolve=>{release=resolve;});return snapshot;};
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});
+ const loading=store.loadBundle('u');await readStarted;
+ await store.saveSession('u',{id:'s',value:1,status:'active'});await store.flush('u');
+ assert.equal(store.pending('u'),0);
+ release();const bundle=await loading;
+ assert.equal(bundle.workoutSessions[0]?.value,1);
+ const cached=await createOfflineStore(f.remote,{storage,online:()=>false}).loadBundle('u');
+ assert.equal(cached.workoutSessions[0]?.value,1);
+});
+test('a save in the lock-release window still reaches the remote', async () => {
+ const storage=memory(), f=fixture();const sent=[];let store;
+ f.remote.saveHabitLog=async(_u,log)=>{sent.push(log.habitId);if(sent.length===1)setTimeout(()=>{void store.saveHabitLog('u',{date:'2026-09-14',habitId:'b',completed:true});},0);};
+ const withLock=async(_key,work)=>{const result=await work();await new Promise(resolve=>setTimeout(resolve,0));return result;};
+ store=createOfflineStore(f.remote,{storage,online:()=>true,withLock});
+ await store.saveHabitLog('u',{date:'2026-09-14',habitId:'a',completed:true});
+ await new Promise(resolve=>setTimeout(resolve,30));
+ assert.deepEqual(sent,['a','b']);assert.equal(store.pending('u'),0);
+});
+test('an unreadable device cache is rebuilt from the account', async () => {
+ const storage=memory(), f=fixture();f.data.metricScans=[{id:'scan'}];
+ storage.setItem('elevate-offline-v1:u','{"bundle":{"workoutSe');
+ const store=createOfflineStore(f.remote,{storage,online:()=>true});
+ const data=await store.loadBundle('u');
+ assert.equal(data.metricScans.length,1);assert.equal(store.pending('u'),0);
 });

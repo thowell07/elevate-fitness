@@ -416,11 +416,19 @@ const CustomExerciseForm = ({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => buildExerciseDraft(defaultGroup));
   const [saving, setSaving] = useState(false);
+  const [problem, setProblem] = useState('');
 
   const save = async () => {
     if (!draft.name.trim()) return;
+    const defaultSets = Number(draft.defaultSets);
+    const defaultRestSeconds = String(draft.defaultRestSeconds).trim() === '' ? 90 : Number(draft.defaultRestSeconds);
+    if (!Number.isInteger(defaultSets) || defaultSets < 1) { setProblem('Sets must be a whole number, 1 or more.'); return; }
+    if (!Number.isInteger(defaultRestSeconds) || defaultRestSeconds < 0) { setProblem('Rest must be a whole number of seconds.'); return; }
+    setProblem('');
     const exercise = {
       ...draft,
+      defaultSets,
+      defaultRestSeconds,
       name: draft.name.trim(),
       id: uid('custom-exercise'),
       primaryMuscles: [],
@@ -469,6 +477,7 @@ const CustomExerciseForm = ({
             <Field label="Target"><input value={draft.defaultReps} onChange={(event) => setDraft({ ...draft, defaultReps: event.target.value })} /></Field>
             <Field label="Rest"><input type="number" value={draft.defaultRestSeconds} onChange={(event) => setDraft({ ...draft, defaultRestSeconds: event.target.value })} /></Field>
           </div>
+          {problem && <p className="notice error" role="alert">{problem}</p>}
           <button className="primary-button" onClick={save} disabled={saving}>{saving ? 'Saving...' : buttonLabel}</button>
         </div>
       )}
@@ -507,7 +516,8 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
 
 const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, draft, saveRoutine }) => {
   const [date, setDate] = useState(draft?.date || todayISO());
-  const existingPlan = draft?.date === date ? draft : data.plannedWorkouts.find((plan) => plan.date === date && plan.status === 'planned');
+  // A reviewed draft stays the plan being edited even when its date moves.
+  const existingPlan = draft || data.plannedWorkouts.find((plan) => plan.date === date && plan.status === 'planned');
   const [workoutType, setWorkoutType] = useState(normalizeWorkoutType(existingPlan?.workoutType || existingPlan?.title || DEFAULT_WORKOUT_TYPE));
   const [warmUp, setWarmUp] = useState(existingPlan?.warmUp || '');
   const [coolDown, setCoolDown] = useState(existingPlan?.coolDown || '');
@@ -520,7 +530,9 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
   const [planSaved, setPlanSaved] = useState(false);
 
   useEffect(() => {
-    const plan = draft?.date === date ? draft : data.plannedWorkouts.find((item) => item.date === date && item.status === 'planned');
+    // Planner remounts per draft, so a draft already filled the form. Changing its date keeps the exercises.
+    if (draft) return;
+    const plan = data.plannedWorkouts.find((item) => item.date === date && item.status === 'planned');
     setWorkoutType(normalizeWorkoutType(plan?.workoutType || plan?.title || DEFAULT_WORKOUT_TYPE));
     setWarmUp(plan?.warmUp || '');
     setCoolDown(plan?.coolDown || '');
@@ -1178,9 +1190,18 @@ const InBodyProgressChart = ({ scans }) => {
 
 const MetricsView = ({ scans, saveMetricScan }) => {
   const [draft, setDraft] = useState({ date: todayISO(), weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '' });
+  const [problem, setProblem] = useState('');
   const save = () => {
-    if (!draft.weight) return;
-    saveMetricScan({ id: uid('metric'), ...draft });
+    // Postgres rejects text in numeric columns, so catch it here before it reaches the sync queue.
+    const labels = { weight: 'Weight', skeletalMuscleMass: 'SMM', percentBodyFat: 'PBF', bodyFatMass: 'Body Fat Mass' };
+    const values = Object.fromEntries(Object.keys(labels).map(key => [key, String(draft[key]).trim()]));
+    if (!draft.date) return setProblem('Choose the scan date.');
+    if (!values.weight) return setProblem('Enter your weight.');
+    // Plain decimals only. Number() also accepts forms like 0x10 that Postgres rejects.
+    const invalid = Object.keys(labels).find(key => values[key] && !/^-?(\d+\.?\d*|\.\d+)$/.test(values[key]));
+    if (invalid) return setProblem(`${labels[invalid]} must be a number, like 185.4.`);
+    setProblem('');
+    saveMetricScan({ id: uid('metric'), date: draft.date, ...values });
     setDraft({ ...draft, weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '' });
   };
   const latest = scans[0];
@@ -1208,6 +1229,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
           <Field label="PBF"><input inputMode="decimal" value={draft.percentBodyFat} onChange={(event) => setDraft({ ...draft, percentBodyFat: event.target.value })} placeholder="%" /></Field>
           <Field label="Body Fat Mass"><input inputMode="decimal" value={draft.bodyFatMass} onChange={(event) => setDraft({ ...draft, bodyFatMass: event.target.value })} placeholder="lbs" /></Field>
         </div>
+        {problem && <p className="notice error" role="alert">{problem}</p>}
         <button className="primary-button" onClick={save}>Save scan</button>
       </section>
       <section className="panel">
@@ -1328,12 +1350,17 @@ export default function App() {
       inFlight = true;
       setReloading(true);
       try {
+        await flushDeferredSave();
         const bundle = await store.loadBundle(userId);
         if (cancelled) return;
         hasLoadedRef.current = true;
         setDataReady(true);
         setData({ ...emptyData, ...bundle });
-        const restored = resumableSessions(bundle.workoutSessions || [])[0] || null;
+        // Keep the workout on screen (its local copy is the freshest). Drop it only when it finished or was deleted.
+        const active = sessionRef.current;
+        const resumable = resumableSessions(bundle.workoutSessions || []);
+        const parked = active && store.failed(userId).some(item => item.method === 'saveSession' && item.target === active.id);
+        const restored = active ? (parked || resumable.some(item => item.id === active.id) ? active : null) : resumable[0] || null;
         setSession(restored);
         sessionRef.current = restored;
         setError('');
@@ -1348,7 +1375,7 @@ export default function App() {
     if (!hasLoadedRef.current) setLoading(true);
     void reload();
     const retry = () => {
-      if (document.hidden) return;
+      if (document.hidden) { void flushDeferredSave(); return; }
       // Retrying an empty save queue cannot recover a failed account read.
       if (store.needsRefresh()) void reload();
       else void store.flush(userId);
@@ -1394,18 +1421,45 @@ export default function App() {
     });
 
   const savePlan = async (plan) => {
+    if (!plan.date) { setError('Choose a date for this workout.'); return false; }
     return saveData(() => store.savePlannedWorkout(userId, plan), {
       plannedWorkouts: [plan, ...data.plannedWorkouts.filter((item) => item.id !== plan.id)],
     });
   };
 
+  const deferredSave = useRef(null);
+  const flushDeferredSave = async () => {
+    const pending = deferredSave.current;
+    if (!pending) return true;
+    clearTimeout(pending.timer);
+    deferredSave.current = null;
+    try { await store.saveSession(userId, pending.session); return true; }
+    catch (saveError) { setError(saveError.message || 'Could not save active workout.'); return false; }
+  };
+  const sessionShape = item => JSON.stringify([item.status, item.restTimer, (item.exerciseLogs || []).map(log => [log.id, log.collapsed, (log.sets || []).map(set => set.completed)])]);
+
   const saveActiveSession = async (nextSession) => {
-    // Device persistence completes before the view can claim a successful finish.
-    try {
-      await store.saveSession(userId, nextSession);
+    const show = () => {
       sessionRef.current = nextSession;
       setSession(nextSession);
       setData(current => ({ ...current, workoutSessions: [nextSession, ...current.workoutSessions.filter(item => item.id !== nextSession.id)] }));
+    };
+    // Typing only changes field text: show it now and write the device copy after 250ms of quiet.
+    const current = sessionRef.current;
+    if (current?.id === nextSession.id && sessionShape(current) === sessionShape(nextSession)) {
+      clearTimeout(deferredSave.current?.timer);
+      show();
+      deferredSave.current = { session: nextSession, timer: setTimeout(() => { void flushDeferredSave(); }, 250) };
+      return true;
+    }
+    // Checks, timers, and finishes carry this session's pending text, so that write can be dropped. Another session's text saves first.
+    if (deferredSave.current && deferredSave.current.session.id !== nextSession.id) await flushDeferredSave();
+    // Device persistence completes before the view claims success.
+    clearTimeout(deferredSave.current?.timer);
+    deferredSave.current = null;
+    try {
+      await store.saveSession(userId, nextSession);
+      show();
       setError('');
       return true;
     } catch (saveError) {
@@ -1429,13 +1483,12 @@ export default function App() {
   };
   const finishSession = async finished => {
     if (!(await saveActiveSession(finished))) return;
-    if (finished.plannedWorkoutId) {
-      const plan = data.plannedWorkouts.find(item => item.id === finished.plannedWorkoutId);
-      if (plan && !(await savePlan({ ...plan, status: 'completed' }))) return;
-    }
+    // The workout is on record once the session saves. A plan-status failure shows in the error banner.
     setSession(null); sessionRef.current = null; setDraft(null);
     setNotice('Workout complete. Your effort is on the record.');
     setActiveTab('history');
+    const plan = finished.plannedWorkoutId && data.plannedWorkouts.find(item => item.id === finished.plannedWorkoutId);
+    if (plan) await savePlan({ ...plan, status: 'completed' });
   };
   const persistRoutine = async name => {
     const routine = { ...repeatAsPlan(routineSource), id: uid('routine'), status: 'routine', routineName: name };
@@ -1502,12 +1555,21 @@ export default function App() {
       exerciseNotes: data.exerciseNotes,
       habitLogs: data.habitLogs,
       inBodyScans: data.metricScans,
+      unsyncedChanges: store.failed(userId),
     });
   };
 
+  const discardFailed = async () => {
+    if (!window.confirm('Discard the change that could not sync? Export your data first to keep a copy.')) return;
+    store.discardFailed(userId);
+    await reloadRef.current();
+  };
+
   const signOut = async () => {
+    await flushDeferredSave();
     await store.flush(userId);
     if (store.pending(userId)) { setError('Your changes are saved on this device. Reconnect and sync before signing out.'); return; }
+    if (store.failed(userId).length) { setError('A change could not sync. Export or discard it before signing out.'); return; }
     if (window.confirm('Sign out of Elevate? Your synced workouts will remain in your account.')) {
       store.clear(userId);
       await supabase.auth.signOut();
@@ -1544,7 +1606,8 @@ export default function App() {
   return (
     <div className={`app-shell ${session?.restTimer ? 'has-rest-timer' : ''}`}>
       <main className="phone-frame">
-        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
+        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.dead ? 'Not synced · A change needs attention' : syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
+        {syncStatus.dead > 0 && <div className="error-banner" role="alert">{syncStatus.dead === 1 ? 'One change could not sync.' : `${syncStatus.dead} changes could not sync.`} {syncStatus.error}<div className="button-row"><button className="text-button" onClick={exportData}>Export data</button><button className="text-button" onClick={discardFailed}>Discard failed change</button></div></div>}
         {error && <div className="error-banner" role="alert">{error}<button className="text-button" onClick={exportData}>Export data</button></div>}
         {notice && <div className="notice success" role="status">{notice}<button className="text-button" onClick={() => setNotice('')} aria-label="Dismiss message">Dismiss</button></div>}
         {activeTab === 'home' && (
