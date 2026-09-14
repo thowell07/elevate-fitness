@@ -9,7 +9,9 @@ export const resumableSessions = (sessions) => {
 };
 export const completedSetCount = (session) => (session.exerciseLogs || []).reduce((n, log) => n + (log.sets || []).filter(s => s.completed).length, 0);
 export const restSecondsFor = (log, exercise) => {
-  const value = Number(log.restSeconds ?? exercise?.defaultRestSeconds ?? 90);
+  // An empty Rest field means "use the default", never 0 seconds.
+  const chosen = [log.restSeconds, exercise?.defaultRestSeconds].find(value => value != null && String(value).trim() !== '');
+  const value = Number(chosen ?? 90);
   return Number.isFinite(value) ? Math.max(0, Math.min(900, value)) : 90;
 };
 export const remainingRest = (timer, now = Date.now()) => !timer ? 0 : timer.pausedSeconds != null ? timer.pausedSeconds : Math.max(0, Math.ceil((timer.endsAt - now) / 1000));

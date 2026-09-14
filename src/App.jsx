@@ -26,9 +26,9 @@ import { createOfflineStore } from './lib/offlineStore';
 import { completedSetCount, isRoutine, makeRestTimer, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
 import RestTimer from './components/RestTimer';
 import PullUpProgress from './components/PullUpProgress';
-import { allowedEmails, isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
+import { isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
-import { downloadJSON, formatDate, normalizeSet, todayISO, uid } from './lib/utils';
+import { downloadJSON, formatDate, formatShortDate, normalizeSet, todayISO, uid } from './lib/utils';
 import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
@@ -257,7 +257,7 @@ const createSessionFromPlan = (plan, sessions) => {
 };
 
 const AuthScreen = ({ onPreview }) => {
-  const [email, setEmail] = useState(allowedEmails[0] || '');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('info');
@@ -274,7 +274,7 @@ const AuthScreen = ({ onPreview }) => {
     }
     if (!password) {
       setMessageType('error');
-      setMessage('Enter the password for your seeded Supabase user.');
+      setMessage('Enter your password.');
       return;
     }
     setBusy(true);
@@ -331,19 +331,19 @@ const AuthScreen = ({ onPreview }) => {
       <Logo />
       <section className="panel auth-panel">
         <h1>Private Elevate sign-in</h1>
-        <p>Use Tarae's seeded Supabase account. Password sign-in keeps the installed app logged in.</p>
+        <p>Sign in with your Elevate account. Password sign-in keeps the installed app signed in.</p>
         <form onSubmit={submit} className="stack">
           <Field label="Email">
             <input value={email} onChange={(event) => {
               setEmail(event.target.value);
               setMessage('');
-            }} type="email" placeholder="tarae@example.com" />
+            }} type="email" placeholder="you@example.com" autoComplete="email" />
           </Field>
           <Field label="Password">
             <input value={password} onChange={(event) => {
               setPassword(event.target.value);
               setMessage('');
-            }} type="password" placeholder="Supabase user password" autoComplete="current-password" />
+            }} type="password" placeholder="Password" autoComplete="current-password" />
           </Field>
           <button className="primary-button" disabled={busy}>{busy ? 'Signing in...' : 'Sign in'}</button>
         </form>
@@ -569,8 +569,11 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
     );
   };
   const persistPlan = async () => {
+    // One planned workout per date: replacing keeps the existing plan's ID so Today and linked sessions stay consistent.
+    const clash = data.plannedWorkouts.find((item) => item.date === date && item.status === 'planned' && item.id !== existingPlan?.id);
+    if (clash && !window.confirm(`${formatDate(date)} already has a planned workout. Replace it with this one? Choose Cancel to pick another date.`)) return null;
     const plan = {
-      id: existingPlan?.id || uid('plan'),
+      id: clash?.id || existingPlan?.id || uid('plan'),
       date,
       title: workoutType,
       routineName: existingPlan?.routineName || '',
@@ -652,7 +655,7 @@ const Planner = ({ data, exercises, savePlan, saveCustomExercise, startPlan, dra
                   <span><strong>{exercise.exerciseName}</strong><small>{exercise.group}</small></span>
                   <button className="icon-button subtle" onClick={() => removeExercise(exercise.id)} aria-label="Remove exercise"><X size={17} /></button>
                 </div>
-                <div className="plan-exercise-options"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${exercise.exerciseName}`} value={exercise.restSeconds ?? exercises.find(e => e.id === exercise.exerciseId)?.defaultRestSeconds ?? 90} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, restSeconds: Math.min(900, Math.max(0, Number(event.target.value))) } : ex))} /> sec</label><label><input type="checkbox" checked={Boolean(exercise.optional)} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, optional: event.target.checked } : ex))} /> Optional</label></div>
+                <div className="plan-exercise-options"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${exercise.exerciseName}`} value={exercise.restSeconds ?? exercises.find(e => e.id === exercise.exerciseId)?.defaultRestSeconds ?? 90} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, restSeconds: event.target.value === '' ? '' : Math.min(900, Math.max(0, Number(event.target.value))) } : ex))} /> sec</label><label><input type="checkbox" checked={Boolean(exercise.optional)} onChange={event => setPlannedExercises(items => items.map(ex => ex.id === exercise.id ? { ...ex, optional: event.target.checked } : ex))} /> Optional</label></div>
                 <div className="set-table compact">
                   <div className="set-head"><span>Set</span><span>Target</span><span>Weight</span></div>
                   {exercise.sets.map((set, index) => (
@@ -799,9 +802,12 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
       if (!String(performed || '').trim()) return;
     }
     const completed = !set.completed;
-    const restTimer = completed ? makeRestTimer(log.id, set.id, restSecondsFor(log, exercise))
+    const exerciseLogs = session.exerciseLogs.map(item => item.id === log.id ? { ...item, sets: item.sets.map((row, rowIndex) => rowIndex === index ? { ...row, completed } : row) } : item);
+    // No countdown after the final set. The dock switches to "Review and finish".
+    const setsRemain = exerciseLogs.some(item => item.sets.some(row => !row.completed));
+    const restTimer = completed ? (setsRemain ? makeRestTimer(log.id, set.id, restSecondsFor(log, exercise)) : null)
       : session.restTimer?.setId === set.id ? null : session.restTimer;
-    updateSession({ ...session, restTimer, exerciseLogs: session.exerciseLogs.map(item => item.id === log.id ? { ...item, sets: item.sets.map((row, rowIndex) => rowIndex === index ? { ...row, completed } : row) } : item) });
+    updateSession({ ...session, restTimer, exerciseLogs });
   };
   const finish = async () => {
     if (finishing) return;
@@ -829,7 +835,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
             </button>
             {!log.collapsed && (
               <div className="exercise-card-body">
-                <div className="exercise-rest-setting"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${log.exerciseName}`} value={restSecondsFor(log, exercise)} onChange={event => patchLog(log.id, item => ({ ...item, restSeconds: Math.min(900, Math.max(0, Number(event.target.value))) }))} /> sec</label><span>{log.exerciseName === 'Assisted Pull-Up' ? 'Weight is assistance' : 'After each set'}</span></div>
+                <div className="exercise-rest-setting"><label>Rest <input type="number" min="0" max="900" step="15" aria-label={`Rest seconds for ${log.exerciseName}`} value={log.restSeconds ?? restSecondsFor(log, exercise)} onChange={event => patchLog(log.id, item => ({ ...item, restSeconds: event.target.value === '' ? '' : Math.min(900, Math.max(0, Number(event.target.value))) }))} /> sec</label><span>{log.exerciseName === 'Assisted Pull-Up' ? 'Weight is assistance' : 'After each set'}</span></div>
                 {data.exerciseNotes[log.exerciseId] && <p className="setup-cue">{data.exerciseNotes[log.exerciseId]}</p>}
                 <div className="set-table">
                   <div className="set-head"><span>Set</span><span>Previous</span><span>Today</span><span></span></div>
@@ -962,7 +968,7 @@ const ExerciseNotes = ({ value, onSave }) => {
 const SaveIcon = () => <Check size={17} />;
 
 const ExerciseHistory = ({ sessions, exerciseId }) => {
-  const rows = sessions
+  const rows = sortSessionsByWorkoutDateDesc(sessions)
     .filter((session) => session.status === 'completed')
     .map((session) => ({ session, log: session.exerciseLogs?.find((item) => item.exerciseId === exerciseId) }))
     .filter((item) => item.log)
@@ -1003,7 +1009,7 @@ const HistoryView = ({ sessions, exportData, deleteSession, reviewPlan, saveRout
               <div className="section-heading">
                 <h2>{formatDate(session.dateCompleted || session.dateStarted)}</h2>
                 <div className="history-card-actions">
-                  <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : String(session.exerciseLogs?.length || 0) + ' exercises'}</span>
+                  <span>{freeform ? String(session.workoutType || 'Workout') + ' log' : `${session.exerciseLogs?.length || 0} ${session.exerciseLogs?.length === 1 ? 'exercise' : 'exercises'}`}</span>
                   <button className="text-button danger history-delete-button" onClick={() => deleteSession(session)}>
                     <Trash2 size={16} /> Delete
                   </button>
@@ -1174,8 +1180,8 @@ const InBodyProgressChart = ({ scans }) => {
                 <text x={point.x} y={point.y - 9} className="chart-value-label">{point.value}{activeDefinition.unit}</text>
               </g>
             ))}
-            <text x={left} y={height - 9} className="chart-date-label">{formatDate(chartScans[0]?.date).replace(', 2026', '')}</text>
-            <text x={width - right} y={height - 9} className="chart-date-label end">{formatDate(chartScans.at(-1)?.date).replace(', 2026', '')}</text>
+            <text x={left} y={height - 9} className="chart-date-label">{formatShortDate(chartScans[0]?.date)}</text>
+            <text x={width - right} y={height - 9} className="chart-date-label end">{formatShortDate(chartScans.at(-1)?.date)}</text>
           </svg>
           <div className="metric-chart-legend">
             <span><i style={{ background: activeDefinition.color }} />{activeDefinition.label}</span>
@@ -1204,7 +1210,9 @@ const MetricsView = ({ scans, saveMetricScan }) => {
     saveMetricScan({ id: uid('metric'), date: draft.date, ...values });
     setDraft({ ...draft, weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '' });
   };
-  const latest = scans[0];
+  // Offline saves prepend unsorted, so order by scan date before choosing the latest.
+  const ordered = [...scans].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const latest = ordered[0];
   return (
     <div className="screen">
       <ScreenHeader icon={BarChart3} title="InBody" subtitle="Weight, SMM, PBF, and Body Fat Mass." />
@@ -1234,7 +1242,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
       </section>
       <section className="panel">
         <div className="section-heading"><h2>Previous scans</h2></div>
-        {scans.map((scan) => (
+        {ordered.map((scan) => (
           <div className="metric-row" key={scan.id}>
             <strong>{formatDate(scan.date)}</strong>
             <span>{scan.weight} lbs / {scan.percentBodyFat || '-'}% / BFM {scan.bodyFatMass || '-'}</span>
@@ -1606,7 +1614,7 @@ export default function App() {
   return (
     <div className={`app-shell ${session?.restTimer ? 'has-rest-timer' : ''}`}>
       <main className="phone-frame">
-        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.dead ? 'Not synced · A change needs attention' : syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? 'Saved on device · Syncing' : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
+        <div className={`sync-strip sync-${syncStatus.state}`} role="status"><span>{preview ? 'Preview · ' : ''}{syncStatus.dead ? 'Not synced · A change needs attention' : syncStatus.readState === 'stale' ? 'Saved on this device · Could not refresh your account' : syncStatus.state === 'saved' ? (preview ? 'Saved in this tab' : 'All changes synced') : syncStatus.state === 'syncing' ? (preview ? 'Saved in this tab' : 'Saved on device · Syncing') : syncStatus.state === 'offline' ? `Offline · ${syncStatus.pending ? 'Changes saved on this device' : 'Device copy'}` : syncStatus.state === 'pending' ? 'Device copy · Waiting to sync' : 'Loading your data'}</span>{(syncStatus.readState === 'stale' || ['pending', 'offline'].includes(syncStatus.state)) && <button disabled={reloading} onClick={() => reloadRef.current()}>{reloading ? 'Reconnecting…' : 'Try again'}</button>}</div>
         {syncStatus.dead > 0 && <div className="error-banner" role="alert">{syncStatus.dead === 1 ? 'One change could not sync.' : `${syncStatus.dead} changes could not sync.`} {syncStatus.error}<div className="button-row"><button className="text-button" onClick={exportData}>Export data</button><button className="text-button" onClick={discardFailed}>Discard failed change</button></div></div>}
         {error && <div className="error-banner" role="alert">{error}<button className="text-button" onClick={exportData}>Export data</button></div>}
         {notice && <div className="notice success" role="status">{notice}<button className="text-button" onClick={() => setNotice('')} aria-label="Dismiss message">Dismiss</button></div>}

@@ -85,36 +85,18 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
   transform: skewX(-26deg);
 }
 
-.hero {
-  margin: -24px -18px 18px;
-  padding: calc(40px + env(safe-area-inset-top)) 20px 56px;
-  color: #fff;
-  text-align: center;
-  background: linear-gradient(145deg, #0f172a 0%, #1d4ed8 80%);
-  border-bottom-left-radius: 36px;
-  border-bottom-right-radius: 36px;
-}
-.hero .logo { color: #fff; }
-.hero .logo-mark { color: #fff; }
-.hero p { max-width: 300px; margin: 12px auto 0; color: rgba(255,255,255,.78); line-height: 1.45; }
 .screen-header { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-bottom: 18px; text-align: center; }
 .screen-header > div { display: flex; align-items: center; gap: 9px; }
 .screen-header h1 { margin: 0; font-size: 25px; }
 .screen-header p { margin: 0; color: #64748b; line-height: 1.4; }
 
-.panel, .exercise-card, .stat-card, .habit-row {
+.panel, .exercise-card, .habit-row {
   background: #fff;
   border: 1px solid #e5edf7;
   border-radius: 8px;
   box-shadow: 0 12px 35px rgba(37, 99, 235, .07);
 }
 .panel { padding: 16px; margin-bottom: 14px; }
-.highlight-panel { border-color: #bfdbfe; background: #eff6ff; }
-.highlight-panel h2 { margin: 0 0 6px; }
-.highlight-panel p { margin: 0 0 12px; color: #475569; line-height: 1.45; }
-.plan-card { display: grid; gap: 16px; position: relative; z-index: 2; }
-.plan-card h1 { margin: 4px 0; font-size: 24px; }
-.plan-card p { margin: 0; color: #64748b; }
 .eyebrow { color: #2563eb; font-size: 12px; font-weight: 850; text-transform: uppercase; }
 .info-strip, .error-banner {
   display: flex;
@@ -130,10 +112,6 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 }
 .error-banner { margin: 12px 18px 0; background: #fee2e2; color: #991b1b; }
 
-.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
-.stat-card { padding: 16px; }
-.stat-card strong { display: block; font-size: 28px; color: #1d4ed8; }
-.stat-card span { color: #64748b; font-size: 13px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .section-heading h2 { margin: 0; font-size: 17px; }
 .section-heading button, .section-heading span { border: 0; background: none; color: #2563eb; font-weight: 800; font-size: 12px; }
@@ -167,13 +145,6 @@ input:focus, textarea:focus, select:focus { border-color: #3b82f6; box-shadow: 0
 .button-row .primary-button, .button-row .secondary-button { flex: 1; }
 .button-row.wrap { flex-wrap: wrap; justify-content: flex-start; }
 .text-button.danger { color: #dc2626; }
-.account-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.account-panel span { display: grid; gap: 3px; }
 
 .exercise-search { display: grid; gap: 12px; }
 .search-box { display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid #dbe3ef; border-radius: 14px; background: #fff; color: #64748b; }

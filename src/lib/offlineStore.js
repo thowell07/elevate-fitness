@@ -1,5 +1,7 @@
 // User-scoped cache + durable outbox. Remote Supabase remains the source of truth.
 // Save calls resolve after the device copy is durable. UI reports pending cloud writes.
+import { uid } from './utils.js';
+
 const PREFIX = 'elevate-offline-v1:';
 const collections = { saveSession: 'workoutSessions', savePlannedWorkout: 'plannedWorkouts', saveCustomExercise: 'customExercises', saveMetricScan: 'metricScans', saveHabitLog: 'habitLogs' };
 export const applyOperation = (bundle, operation) => {
@@ -140,7 +142,8 @@ export const createOfflineStore = (remote, { storage = localStorage, online = ()
     store[method] = async (userId, ...args) => {
       const current = read(userId);
       const target = typeof args[0] === 'string' ? args[0] : method === 'saveHabitLog' ? `${args[0].date}:${args[0].habitId}` : args[0].id;
-      const operation = { id: crypto.randomUUID(), method, target, args: structuredClone(args) };
+      // uid() and the JSON copy keep saves working where crypto.randomUUID or structuredClone is missing (plain-http LAN dev, older Safari).
+      const operation = { id: uid('op'), method, target, args: typeof structuredClone === 'function' ? structuredClone(args) : JSON.parse(JSON.stringify(args)) };
       // Coalesce rapid input edits, preserving dependency order (plans before sessions).
       const index = current.queue.findIndex(item => item.method === method && item.target === target);
       if (index >= 0) current.queue[index] = operation;
