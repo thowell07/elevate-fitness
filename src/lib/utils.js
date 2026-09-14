@@ -16,13 +16,24 @@ export const slug = (value) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
 
+// Timestamps render in local time (8:30pm ET is still today); plain dates parse at local noon.
+const displayDate = (value) => {
+  const text = String(value);
+  return text.includes('T') ? new Date(text) : new Date(`${text.slice(0, 10)}T12:00:00`);
+};
+
 export const formatDate = (value) => {
   if (!value) return '';
-  return new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, {
+  return displayDate(value).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   });
+};
+
+export const formatShortDate = (value) => {
+  if (!value) return '';
+  return displayDate(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 };
 
 export const normalizeSet = (set = {}, index = 0) => ({
