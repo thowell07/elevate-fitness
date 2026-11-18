@@ -287,6 +287,7 @@ details[open] > summary::after { content: "–"; }
 .swap-panel, .active-add-body { padding-top: 2px; }
 .sticky-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .sticky-actions .primary-button { flex: 1 1 180px; }
+.discard-workout { align-self: flex-start; margin-top: 4px; }
 
 /* Rest: inline above the next set, a pill everywhere else */
 .rest-inline { position: relative; display: grid; gap: 8px; overflow: hidden; margin-inline: calc(var(--gutter) * -1); padding: 14px var(--gutter) 18px; border-top: 2px solid var(--ink); background: var(--accent-soft); }
@@ -342,6 +343,31 @@ details[open] > summary::after { content: "–"; }
 .entry-lines small { font-variant-numeric: tabular-nums; }
 .entry-actions { gap: 4px 14px; }
 .entry-actions .secondary-button { flex: 0 0 auto; }
+
+/* Lifts */
+.lift-list { margin: 0; padding: 0; list-style: none; border-top: 2px solid var(--ink); }
+.lift-list > li { border-bottom: 1px solid var(--line); }
+.lift-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 0; border: 0; background: transparent; text-align: left; }
+.lift-name { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.lift-name strong { overflow-wrap: anywhere; }
+.lift-name small { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.lift-row > b { max-width: 42%; text-align: right; font-variant-numeric: tabular-nums; }
+.lift-spark { flex-shrink: 0; width: 64px; height: 24px; }
+.spark-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.lift-detail { display: grid; gap: 10px; padding: 4px 0 14px; }
+.lift-standing { font-size: 14px; font-weight: 700; color: var(--muted); }
+.lift-standing.good { color: var(--good); }
+.chart-axis-label { fill: var(--muted); font-family: var(--text); font-size: 10px; text-anchor: end; font-variant-numeric: tabular-nums; }
+
+/* Today: habit tiles and cardio */
+.habit-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.habit-tile { min-height: 58px; padding: 4px; border: 2px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 700; line-height: 1.15; overflow-wrap: anywhere; }
+.habit-tile.done { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.habit-tiles-section .text-button, .cardio-log > .secondary-button { justify-self: start; }
+.cardio-log .goal-number { font-size: 56px; }
+.cardio-log .ledger span { display: grid; gap: 2px; }
+.cardio-log .ledger small { color: var(--muted); font-size: 13px; }
+.cardio-form input[type=date] { min-width: 0; max-width: 100%; }
 
 /* Habits */
 .habit-grid { display: grid; }

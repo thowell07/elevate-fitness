@@ -143,3 +143,19 @@ test('an unreadable device cache is rebuilt from the account', async () => {
  const data=await store.loadBundle('u');
  assert.equal(data.metricScans.length,1);assert.equal(store.pending('u'),0);
 });
+test('a discarded workout is removed after its queued save, on the device and in the account', async () => {
+ const storage=memory(), f=fixture();let online=false;const order=[];
+ const save=f.remote.saveSession;
+ f.remote.saveSession=async(...args)=>{order.push('save');return save(...args);};
+ f.remote.deleteSession=async(_u,id)=>{order.push('delete');f.data.workoutSessions=f.data.workoutSessions.filter(x=>x.id!==id);};
+ const store=createOfflineStore(f.remote,{storage,online:()=>online});
+ await store.saveSession('u',{id:'s',status:'active'});
+ await store.saveSession('u',{id:'keep',status:'active'});
+ await store.deleteSession('u','s');
+ assert.deepEqual((await store.loadBundle('u')).workoutSessions.map(s=>s.id),['keep']);
+ online=true;await store.flush('u');
+ assert.equal(store.pending('u'),0);
+ assert.deepEqual(order,['save','save','delete']);
+ assert.deepEqual(f.data.workoutSessions.map(s=>s.id),['keep']);
+ assert.deepEqual((await store.loadBundle('u')).workoutSessions.map(s=>s.id),['keep']);
+});

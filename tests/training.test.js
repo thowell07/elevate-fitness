@@ -57,3 +57,56 @@ test('cloud row decoding preserves distinct IDs and runtime metadata', () => {
   assert.equal(plan.kind,undefined);
   assert.equal(workout.exerciseLogs.length,1);
 });
+
+import { liftProgress, cardioThisWeek, weekStart } from '../src/lib/training.js';
+import { isFreeformWorkout, normalizeWorkoutType, WORKOUT_TYPE_OPTIONS } from '../src/lib/workoutDetails.js';
+const done = (date, logs, extra = {}) => ({ id: `s-${date}-${Math.random()}`, status: 'completed', dateStarted: `${date}T12:00:00`, dateCompleted: `${date}T12:00:00`, exerciseLogs: logs, ...extra });
+const lift = (exerciseId, exerciseName, sets) => ({ exerciseId, exerciseName, sets: sets.map(([actualWeight, actualReps, completed = true]) => ({ actualWeight, actualReps, completed })) });
+
+test('lift progress takes the top completed set of each workout and keeps the earliest best', () => {
+  const sessions = [
+    done('2026-09-01', [lift('press', 'Machine Chest Press', [['110', '8'], ['110', '8']])]),
+    done('2026-08-01', [lift('press', 'Machine Chest Press', [['105', '8'], ['110', '8'], ['200', '8', false]])]),
+    done('2026-11-17', [lift('press', 'Machine Chest Press', [['85', '8'], ['85', '8']])]),
+    { ...done('2026-11-18', [lift('press', 'Machine Chest Press', [['300', '8']])]), status: 'active' },
+  ];
+  const [press] = liftProgress(sessions);
+  assert.equal(press.metric, 'weight');
+  assert.deepEqual(press.points.map(p => p.value), [110, 110, 85]);
+  assert.equal(press.best.date.slice(0, 10), '2026-08-01');
+  assert.equal(press.last.label, '85 lb × 8');
+});
+
+test('assisted pull-ups treat less assistance as better, and unweighted lifts track reps', () => {
+  const sessions = [
+    done('2026-09-03', [lift('preset-assisted-pull-up', 'Assisted Pull-Up', [['45', '8'], ['55', '8']]), lift('curl', 'Leg Curl', [['', '12'], ['', '10']])]),
+    done('2026-11-17', [lift('preset-assisted-pull-up', 'Assisted Pull-Up', [['70', '8']]), lift('plank', 'Plank', [['', '']].map(() => ['', '', true]))]),
+  ];
+  const lifts = Object.fromEntries(liftProgress(sessions).map(item => [item.key, item]));
+  assert.equal(lifts['preset-assisted-pull-up'].best.value, 45);
+  assert.equal(lifts['preset-assisted-pull-up'].last.label, '70 lb assist × 8');
+  assert.equal(lifts.curl.metric, 'reps');
+  assert.equal(lifts.curl.best.label, '12 reps');
+  assert.equal(lifts.plank.metric, 'none');
+  assert.equal(lifts.plank.points.length, 0);
+});
+
+test('cardio minutes total the Monday to Sunday week that holds today', () => {
+  assert.equal(weekStart('2026-11-18'), '2026-11-16');
+  assert.equal(weekStart('2026-11-22'), '2026-11-16');
+  const cardio = (date, minutes) => done(date, [], { workoutType: 'Cardio', cardio: { activity: 'Walk', minutes, avgHeartRate: null } });
+  const week = cardioThisWeek([cardio('2026-11-15', 40), cardio('2026-11-16', 25), cardio('2026-11-21', 30), done('2026-11-17', [])], '2026-11-18');
+  assert.equal(week.minutes, 55);
+  assert.equal(week.entries.length, 2);
+});
+
+test('cardio details survive the stored metadata round trip and stay out of the planner', () => {
+  const stored = attachWorkoutDetails([], { workoutType: 'Cardio', cardio: { activity: 'Walk', minutes: 30, avgHeartRate: '' } });
+  const { details, items } = extractWorkoutDetails(stored);
+  assert.deepEqual(details.cardio, { activity: 'Walk', minutes: 30, avgHeartRate: null });
+  assert.equal(items.length, 0);
+  assert.equal(normalizeWorkoutType('Cardio'), 'Cardio');
+  assert.equal(isFreeformWorkout('Cardio'), true);
+  assert.equal(WORKOUT_TYPE_OPTIONS.includes('Cardio'), false);
+  assert.equal(extractWorkoutDetails(attachWorkoutDetails([], { workoutType: 'Lifetime', cardio: { minutes: 30 } })).details.cardio, null);
+});

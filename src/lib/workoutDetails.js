@@ -1,6 +1,9 @@
 export const DEFAULT_WORKOUT_TYPE = 'Lifetime';
 export const CROSSFIT_WORKOUT_TYPE = 'CrossFit';
 export const AT_HOME_WORKOUT_TYPE = 'At Home';
+// Cardio entries are logged in one step from Today. They never go through the planner.
+export const CARDIO_WORKOUT_TYPE = 'Cardio';
+export const CARDIO_ACTIVITIES = ['Walk', 'Treadmill', 'Rower', 'Bike'];
 
 export const WORKOUT_TYPE_OPTIONS = [
   DEFAULT_WORKOUT_TYPE,
@@ -10,7 +13,7 @@ export const WORKOUT_TYPE_OPTIONS = [
 
 const WORKOUT_DETAILS_KIND = 'workoutDetails';
 const WORKOUT_DETAILS_ID = 'workout-details';
-const FREEFORM_WORKOUT_TYPES = new Set([CROSSFIT_WORKOUT_TYPE, AT_HOME_WORKOUT_TYPE]);
+const FREEFORM_WORKOUT_TYPES = new Set([CROSSFIT_WORKOUT_TYPE, AT_HOME_WORKOUT_TYPE, CARDIO_WORKOUT_TYPE]);
 const LEGACY_WORKOUT_TYPE_MAP = {
   'Lifetime Gym': DEFAULT_WORKOUT_TYPE,
   'CrossFit At Home Workout': CROSSFIT_WORKOUT_TYPE,
@@ -19,11 +22,28 @@ const LEGACY_WORKOUT_TYPE_MAP = {
 };
 
 export const normalizeWorkoutType = (value) => {
-  if (WORKOUT_TYPE_OPTIONS.includes(value)) return value;
+  if (WORKOUT_TYPE_OPTIONS.includes(value) || value === CARDIO_WORKOUT_TYPE) return value;
   return LEGACY_WORKOUT_TYPE_MAP[value] || DEFAULT_WORKOUT_TYPE;
 };
 
 export const isCrossFitWorkout = (workoutType) => normalizeWorkoutType(workoutType) === CROSSFIT_WORKOUT_TYPE;
+
+export const isCardioWorkout = (workoutType) => normalizeWorkoutType(workoutType) === CARDIO_WORKOUT_TYPE;
+
+// Minutes are required. Heart rate is optional and stays null when blank.
+export const sanitizeCardio = (cardio) => {
+  const minutes = Number(cardio?.minutes);
+  if (!cardio || !Number.isFinite(minutes) || minutes <= 0) return null;
+  const heartRate = Number(cardio.avgHeartRate);
+  return {
+    activity: String(cardio.activity || 'Cardio').trim() || 'Cardio',
+    minutes,
+    avgHeartRate: cardio.avgHeartRate !== null && cardio.avgHeartRate !== '' && Number.isFinite(heartRate) && heartRate > 0 ? heartRate : null,
+  };
+};
+
+export const cardioSummary = (cardio) =>
+  cardio ? `${cardio.activity} · ${cardio.minutes} min${cardio.avgHeartRate ? ` · avg ${cardio.avgHeartRate} bpm` : ''}` : '';
 
 export const isFreeformWorkout = (workoutType) => FREEFORM_WORKOUT_TYPES.has(normalizeWorkoutType(workoutType));
 
@@ -95,6 +115,7 @@ export const createWorkoutDetails = (source = {}) => {
     wod,
     workoutDescription,
     crossFitWorkout: workoutDescription,
+    cardio: workoutType === CARDIO_WORKOUT_TYPE ? sanitizeCardio(source.cardio) : null,
   };
 };
 
