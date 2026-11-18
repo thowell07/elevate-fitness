@@ -497,7 +497,7 @@ const CustomExerciseForm = ({
   );
 };
 
-const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut, session, resumeSession, reviewPlan, saveRoutine }) => {
+const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut, session, resumeSession, discardSession, reviewPlan, saveRoutine }) => {
   const todaysPlan = data.plannedWorkouts.find(plan => plan.date === todayISO() && plan.status === 'planned');
   const completed = sortSessionsByWorkoutDateDesc(data.workoutSessions.filter(s => s.status === 'completed'));
   const unfinished = resumableSessions(data.workoutSessions);
@@ -523,7 +523,7 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
       {completed[0] && <div className="recent-repeat"><span><strong>Repeat your last workout</strong><small>{workoutName(completed[0])} · {formatDate(completed[0].dateCompleted || completed[0].dateStarted)}</small></span><div className="button-row"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(completed[0]))}>Review repeat</button><button className="text-button" onClick={() => saveRoutine(completed[0])}>Save routine</button></div></div>}
     </section>
     <PullUpProgress sessions={data.workoutSessions} />
-    {unfinished.filter(item => item.id !== session?.id).length > 0 && <details className="panel"><summary>Other unfinished sessions</summary>{unfinished.filter(item => item.id !== session?.id).map(item => <div className="routine-row" key={item.id}><span>{workoutName(item)}<small>{formatDate(item.dateStarted)} · {completedSetCount(item)} sets checked</small></span><button className="text-button" onClick={() => resumeSession(item)}>Resume</button></div>)}</details>}
+    {unfinished.filter(item => item.id !== session?.id).length > 0 && <details className="panel"><summary>Other unfinished sessions</summary>{unfinished.filter(item => item.id !== session?.id).map(item => <div className="routine-row" key={item.id}><span>{workoutName(item)}<small>{formatDate(item.dateStarted)} · {completedSetCount(item)} sets checked</small></span><div className="button-row"><button className="text-button" onClick={() => resumeSession(item)}>Resume</button><button className="text-button danger" onClick={() => discardSession(item)}>Discard</button></div></div>)}</details>}
     <details className="account-area"><summary>Account and data</summary>
       <p className="muted">Download every workout, scan, and habit as JSON for planning or backup.</p>
       <div className="button-row wrap"><button className="secondary-button" onClick={exportData}><Download size={16} />Export data</button>{!preview && <button className="ghost-button" onClick={onSignOut}><LogOut size={16} />Sign out</button>}</div>
@@ -721,7 +721,7 @@ const SessionElapsed = ({ startedAt }) => {
   return <p className="session-elapsed">{minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`}</p>;
 };
 
-const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, saveExerciseNote, saveCustomExercise, clearActive }) => {
+const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession, discardSession, saveExerciseNote, saveCustomExercise, clearActive }) => {
   const [detailTabs, setDetailTabs] = useState({});
   const [swapFor, setSwapFor] = useState(null);
   const [addingExercise, setAddingExercise] = useState(false);
@@ -985,6 +985,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
           <CheckCircle2 size={18} /> Finish workout
         </button>
       </div>
+      <button className="text-button danger discard-workout" disabled={finishing} onClick={() => discardSession(session)}><Trash2 size={16} /> Discard workout</button>
     </div>
   );
 };
@@ -1610,6 +1611,26 @@ export default function App() {
     if (session?.id === workoutSession.id) setSession(null);
   };
 
+  // Throws away an unfinished workout. Its plan stays planned, so Today can start it again.
+  const discardSession = async (workoutSession) => {
+    const checked = completedSetCount(workoutSession);
+    const detail = checked ? `${checked} checked ${checked === 1 ? 'set' : 'sets'} will be deleted.` : 'Nothing has been checked off yet.';
+    if (!window.confirm(`Discard this unfinished ${workoutName(workoutSession)} workout from ${formatDate(workoutSession.dateStarted)}? ${detail} This cannot be undone.`)) return false;
+    // Text still waiting to save must not write the session back after the delete.
+    if (deferredSave.current?.session.id === workoutSession.id) { clearTimeout(deferredSave.current.timer); deferredSave.current = null; }
+    const removed = await saveData(() => store.deleteSession(userId, workoutSession.id), {
+      workoutSessions: data.workoutSessions.filter((item) => item.id !== workoutSession.id),
+    });
+    if (!removed) return false;
+    if (sessionRef.current?.id === workoutSession.id) {
+      sessionRef.current = null;
+      setSession(null);
+      setActiveTab((tab) => (tab === 'active' ? 'home' : tab));
+    }
+    setNotice('Workout discarded.');
+    return true;
+  };
+
   const saveExerciseNote = (exerciseId, note) =>
     saveData(() => store.saveExerciseNote(userId, exerciseId, note), {
       exerciseNotes: { ...data.exerciseNotes, [exerciseId]: note },
@@ -1707,6 +1728,7 @@ export default function App() {
             data={data}
             session={session}
             resumeSession={resumeSession}
+            discardSession={discardSession}
             reviewPlan={reviewPlan}
             saveRoutine={setRoutineSource}
             setActiveTab={tab => { if (tab === 'plan') setDraft(null); setActiveTab(tab); }}
@@ -1738,6 +1760,7 @@ export default function App() {
             data={data}
             updateSession={saveActiveSession}
             finishSession={finishSession}
+            discardSession={discardSession}
             saveExerciseNote={saveExerciseNote}
             saveCustomExercise={saveCustomExercise}
             clearActive={() => setActiveTab('home')}

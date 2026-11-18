@@ -287,6 +287,7 @@ details[open] > summary::after { content: "–"; }
 .swap-panel, .active-add-body { padding-top: 2px; }
 .sticky-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .sticky-actions .primary-button { flex: 1 1 180px; }
+.discard-workout { align-self: flex-start; margin-top: 4px; }
 
 /* Rest: inline above the next set, a pill everywhere else */
 .rest-inline { position: relative; display: grid; gap: 8px; overflow: hidden; margin-inline: calc(var(--gutter) * -1); padding: 14px var(--gutter) 18px; border-top: 2px solid var(--ink); background: var(--accent-soft); }
