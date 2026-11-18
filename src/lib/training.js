@@ -1,7 +1,7 @@
-import { normalizeSet, uid, todayISO } from './utils.js';
+import { addDays, localDateKey, normalizeSet, uid, todayISO } from './utils.js';
 
 export const isRoutine = (plan) => plan.status === 'routine';
-export const workoutName = (source) => source.routineName || source.workoutType || source.title || 'Workout';
+export const workoutName = (source) => source.routineName || source.cardio?.activity || source.workoutType || source.title || 'Workout';
 export const sortedSessions = (sessions) => [...sessions].sort((a, b) => String(b.dateCompleted || b.dateStarted).localeCompare(String(a.dateCompleted || a.dateStarted)));
 export const resumableSessions = (sessions) => {
   const finishedPlans = new Set(sessions.filter(s => s.status === 'completed' && s.plannedWorkoutId).map(s => s.plannedWorkoutId));
@@ -57,4 +57,60 @@ export const pullUpProgress = (sessions) => {
       .map(assistance => ({ date: entry.date, assistance }));
   }).sort((a,b) => a.assistance - b.assistance || b.date.localeCompare(a.date));
   return { entries, best: milestones[0] || null };
+};
+
+// Monday of the week that holds the given local date.
+export const weekStart = (isoDate) => addDays(isoDate, -((new Date(`${isoDate}T12:00:00`).getDay() + 6) % 7));
+export const cardioThisWeek = (sessions, today = todayISO()) => {
+  const start = weekStart(today), end = addDays(start, 6);
+  const entries = sortedSessions(sessions.filter(s => s.status === 'completed' && Number(s.cardio?.minutes) > 0))
+    .filter(s => { const day = localDateKey(s.dateCompleted || s.dateStarted); return day >= start && day <= end; });
+  return { start, minutes: entries.reduce((total, s) => total + Number(s.cardio.minutes), 0), entries };
+};
+
+const isAssisted = log => log.exerciseId === 'preset-assisted-pull-up' || log.exerciseName === 'Assisted Pull-Up';
+const topSetLabel = (set, metric, assisted) => {
+  if (metric === 'weight' && numeric(set.actualWeight) !== null) return `${set.actualWeight} lb${assisted ? ' assist' : ''}${String(set.actualReps ?? '').trim() ? ` × ${set.actualReps}` : ''}`;
+  if (String(set.actualReps ?? '').trim()) return `${set.actualReps} reps`;
+  return String(set.actualTime || '');
+};
+// One entry per exercise from completed sets only. Each visit contributes its top set:
+// the heaviest weight, or the most reps when the lift has never carried a weight.
+// Assisted pull-ups invert the comparison, because less assistance is the better set.
+export const liftProgress = (sessions) => {
+  const lifts = new Map();
+  for (const session of sortedSessions(sessions.filter(s => s.status === 'completed')).reverse()) {
+    for (const log of session.exerciseLogs || []) {
+      const sets = (log.sets || []).filter(s => s.completed);
+      if (!sets.length) continue;
+      const key = log.exerciseId || log.exerciseName;
+      if (!lifts.has(key)) lifts.set(key, { key, exerciseId: log.exerciseId, name: log.exerciseName, lowerIsBetter: isAssisted(log), visits: [] });
+      const lift = lifts.get(key);
+      lift.name = log.exerciseName;
+      lift.visits.push({ date: session.dateCompleted || session.dateStarted, sets });
+    }
+  }
+  return [...lifts.values()].map(({ visits, ...lift }) => {
+    const all = visits.flatMap(visit => visit.sets);
+    const metric = all.some(s => numeric(s.actualWeight) !== null) ? 'weight' : all.some(s => numeric(s.actualReps) !== null) ? 'reps' : 'none';
+    const lowerIsBetter = lift.lowerIsBetter && metric === 'weight';
+    const valueOf = set => metric === 'weight' ? numeric(set.actualWeight) : metric === 'reps' ? numeric(set.actualReps) : null;
+    const beats = (a, b) => (lowerIsBetter ? a.value < b.value : a.value > b.value) || (a.value === b.value && a.reps > b.reps);
+    const visitsWithTop = visits.map(visit => {
+      let top = null;
+      for (const set of visit.sets) {
+        const value = valueOf(set);
+        if (value === null) continue;
+        const candidate = { value, reps: numeric(set.actualReps) ?? 0, set };
+        if (!top || beats(candidate, top)) top = candidate;
+      }
+      return top
+        ? { date: visit.date, value: top.value, reps: top.reps, label: topSetLabel(top.set, metric, lowerIsBetter) }
+        : { date: visit.date, value: null, reps: 0, label: topSetLabel(visit.sets[0], 'none', false) };
+    });
+    const points = visitsWithTop.filter(point => point.value !== null);
+    // Ties keep the earliest date, the day the mark was first set.
+    const best = points.reduce((leader, point) => (!leader || beats(point, leader) ? point : leader), null);
+    return { ...lift, lowerIsBetter, metric, points, best, last: visitsWithTop.at(-1), visits: visitsWithTop };
+  }).sort((a, b) => String(b.last.date).localeCompare(String(a.last.date)));
 };

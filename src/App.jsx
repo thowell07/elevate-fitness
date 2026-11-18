@@ -26,10 +26,13 @@ import { createOfflineStore } from './lib/offlineStore';
 import { completedSetCount, isRoutine, makeRestTimer, nextSet, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
 import RestTimer from './components/RestTimer';
 import PullUpProgress from './components/PullUpProgress';
+import HabitTiles from './components/HabitTiles';
+import CardioLog from './components/CardioLog';
+import LiftsView, { LiftTrend } from './components/LiftsView';
 import { isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { addDays, downloadJSON, formatDate, formatShortDate, localDateKey, normalizeSet, todayISO, uid } from './lib/utils';
-import { DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
+import { CARDIO_WORKOUT_TYPE, cardioSummary, DEFAULT_WORKOUT_TYPE, formatCrossFitWorkoutDescription, isCrossFitWorkout, isFreeformWorkout, normalizeWorkoutType, sanitizeCrossFitWod, WORKOUT_TYPE_OPTIONS } from './lib/workoutDetails';
 
 const emptyData = {
   customExercises: [],
@@ -497,9 +500,11 @@ const CustomExerciseForm = ({
   );
 };
 
-const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut, session, resumeSession, discardSession, reviewPlan, saveRoutine }) => {
+const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, legacySummary, importLegacy, preview, onSignOut, session, resumeSession, discardSession, reviewPlan, saveRoutine, saveHabitLog, saveCardio }) => {
   const todaysPlan = data.plannedWorkouts.find(plan => plan.date === todayISO() && plan.status === 'planned');
   const completed = sortSessionsByWorkoutDateDesc(data.workoutSessions.filter(s => s.status === 'completed'));
+  // Cardio entries have nothing to repeat as a plan.
+  const lastWorkout = completed.find(s => !s.cardio);
   const unfinished = resumableSessions(data.workoutSessions);
   const routines = data.plannedWorkouts.filter(isRoutine);
   const recentCount = completed.filter(s => { const days = (Date.now() - new Date(s.dateCompleted || s.dateStarted)) / 86400000; return days >= 0 && days < 7; }).length;
@@ -516,11 +521,13 @@ const HomeDashboard = ({ data, setActiveTab, startPlan, exportData, storeMode, l
       {todaysPlan && !session && <button className="text-button" onClick={() => reviewPlan(todaysPlan)}>Review or adjust plan</button>}
       {!session && todaysPlan?.exercises?.length > 0 && <ol className="ledger">{todaysPlan.exercises.map(exercise => <li key={exercise.id}><span>{exercise.exerciseName}</span><b>{exercise.sets.length} {exercise.sets.length === 1 ? 'set' : 'sets'}</b></li>)}</ol>}
     </section>
+    <HabitTiles habitLogs={data.habitLogs} saveHabitLog={saveHabitLog} openWeek={() => setActiveTab('habits')} />
     <div className="week-line"><strong>{recentCount}</strong><span>{recentCount === 1 ? 'completed session' : 'completed sessions'} in the last 7 days</span><button className="text-button" onClick={() => setActiveTab('history')}>History</button></div>
+    <CardioLog sessions={data.workoutSessions} saveCardio={saveCardio} />
     <section className="ledger-section"><div className="section-heading"><h2>Your routines</h2><span>{routines.length} saved</span></div>
       {routines.map(routine => <div className="routine-row" key={routine.id}><div><strong>{workoutName(routine)}</strong><small>{routine.exercises.length ? `${routine.exercises.length} ${routine.exercises.length === 1 ? 'exercise' : 'exercises'}` : routine.workoutType}</small></div><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(routine))}>Use routine</button></div>)}
       {!routines.length && <p className="muted">Save a workout you like, then make it yours again.</p>}
-      {completed[0] && <div className="recent-repeat"><span><strong>Repeat your last workout</strong><small>{workoutName(completed[0])} · {formatDate(completed[0].dateCompleted || completed[0].dateStarted)}</small></span><div className="button-row"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(completed[0]))}>Review repeat</button><button className="text-button" onClick={() => saveRoutine(completed[0])}>Save routine</button></div></div>}
+      {lastWorkout && <div className="recent-repeat"><span><strong>Repeat your last workout</strong><small>{workoutName(lastWorkout)} · {formatDate(lastWorkout.dateCompleted || lastWorkout.dateStarted)}</small></span><div className="button-row"><button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(lastWorkout))}>Review repeat</button><button className="text-button" onClick={() => saveRoutine(lastWorkout)}>Save routine</button></div></div>}
     </section>
     <PullUpProgress sessions={data.workoutSessions} />
     {unfinished.filter(item => item.id !== session?.id).length > 0 && <details className="panel"><summary>Other unfinished sessions</summary>{unfinished.filter(item => item.id !== session?.id).map(item => <div className="routine-row" key={item.id}><span>{workoutName(item)}<small>{formatDate(item.dateStarted)} · {completedSetCount(item)} sets checked</small></span><div className="button-row"><button className="text-button" onClick={() => resumeSession(item)}>Resume</button><button className="text-button danger" onClick={() => discardSession(item)}>Discard</button></div></div>)}</details>}
@@ -912,7 +919,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
                   <TabButton active={tab === 'notes'} onClick={() => setDetailTabs({ ...detailTabs, [log.id]: tab === 'notes' ? '' : 'notes' })}><StickyNote size={16} /> My Notes</TabButton>
                 </div>
                 {tab === 'how' && <p className="detail-copy">{exercise.instructions || 'No instructions yet.'}</p>}
-                {tab === 'history' && <ExerciseHistory sessions={data.workoutSessions} exerciseId={log.exerciseId} />}
+                {tab === 'history' && <><LiftTrend sessions={data.workoutSessions} exerciseId={log.exerciseId} /><ExerciseHistory sessions={data.workoutSessions} exerciseId={log.exerciseId} /></>}
                 {tab === 'notes' && (
                   <ExerciseNotes
                     value={data.exerciseNotes[log.exerciseId] || ''}
@@ -1025,6 +1032,7 @@ const ExerciseHistory = ({ sessions, exerciseId }) => {
 const WEEKDAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
 const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
+  const [view, setView] = useState('log');
   const completed = sortSessionsByWorkoutDateDesc(sessions.filter((session) => session.status === 'completed'));
   const today = todayISO();
   // Four full weeks, Monday first, ending with the current week.
@@ -1040,6 +1048,12 @@ const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
   return (
     <div className="screen">
       <ScreenHeader label="History" title="Training log" meta={`${completed.length} completed ${completed.length === 1 ? 'workout' : 'workouts'}`} />
+      <div className="detail-tabs" role="group" aria-label="History view">
+        <TabButton active={view === 'log'} onClick={() => setView('log')}><History size={16} /> Log</TabButton>
+        <TabButton active={view === 'lifts'} onClick={() => setView('lifts')}><BarChart3 size={16} /> Lifts</TabButton>
+      </div>
+      {view === 'lifts' && <LiftsView sessions={sessions} />}
+      {view === 'log' && <>
       <section className="calendar" aria-label="Last four weeks">
         <div className="calendar-head" aria-hidden="true">{WEEKDAY_LETTERS.map((letter, index) => <span key={index}>{letter}</span>)}</div>
         <div className="calendar-grid">
@@ -1056,6 +1070,7 @@ const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
       {completed.map((session) => {
         const freeform = isFreeformWorkout(session.workoutType || session.title);
         const crossFit = isCrossFitWorkout(session.workoutType || session.title);
+        const cardio = session.cardio;
         const workoutDescription = session.workoutDescription || session.crossFitWorkout || '';
         const { strength, wod, notes } = crossFit ? historyCrossFitText(session) : { strength: '', wod: '', notes: session.notes || '' };
         const day = dayOf(session);
@@ -1068,12 +1083,13 @@ const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
                 <p className="label">{formatDate(session.dateCompleted || session.dateStarted)}</p>
                 <h2 className="entry-title">{workoutName(session)}</h2>
               </div>
-              <span className="entry-count">{freeform ? `${session.workoutType || 'Workout'} log` : `${session.exerciseLogs?.length || 0} ${session.exerciseLogs?.length === 1 ? 'exercise' : 'exercises'}`}</span>
+              <span className="entry-count">{cardio ? 'Cardio' : freeform ? `${session.workoutType || 'Workout'} log` : `${session.exerciseLogs?.length || 0} ${session.exerciseLogs?.length === 1 ? 'exercise' : 'exercises'}`}</span>
             </header>
             {!freeform && session.warmUp && <p className="note-copy"><strong>Warm up</strong><br />{session.warmUp}</p>}
             {crossFit && strength && <p className="note-copy"><strong>Strength</strong><br />{strength}</p>}
             {crossFit && wod && <p className="note-copy"><strong>WOD</strong><br />{wod}</p>}
-            {freeform && !crossFit && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
+            {cardio && <p className="note-copy"><strong>{cardio.minutes} min</strong>{cardio.avgHeartRate ? ` · avg ${cardio.avgHeartRate} bpm` : ''}</p>}
+            {freeform && !crossFit && !cardio && workoutDescription && <p className="note-copy"><strong>Full workout</strong><br />{workoutDescription}</p>}
             {!freeform && session.exerciseLogs?.length > 0 && (
               <ul className="entry-lines">
                 {session.exerciseLogs.map((log) => (
@@ -1084,14 +1100,15 @@ const HistoryView = ({ sessions, deleteSession, reviewPlan, saveRoutine }) => {
             {!freeform && session.coolDown && <p className="note-copy"><strong>Cool down</strong><br />{session.coolDown}</p>}
             {notes && <p className="note-copy"><strong>Notes</strong><br />{notes}</p>}
             <div className="button-row wrap entry-actions">
-              <button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(session))}>Repeat workout</button>
-              <button className="text-button" onClick={() => saveRoutine(session)}>Save routine</button>
+              {!cardio && <button className="secondary-button" onClick={() => reviewPlan(repeatAsPlan(session))}>Repeat workout</button>}
+              {!cardio && <button className="text-button" onClick={() => saveRoutine(session)}>Save routine</button>}
               <button className="text-button danger" onClick={() => deleteSession(session)}><Trash2 size={16} /> Delete</button>
             </div>
           </article>
         );
       })}
       {!completed.length && <p className="empty page-empty">No completed workouts yet.</p>}
+      </>}
     </div>
   );
 };
@@ -1492,7 +1509,8 @@ export default function App() {
 
   const saveData = async (action, nextData) => {
     setError('');
-    setData((current) => ({ ...current, ...nextData }));
+    // A function sees the latest state, so two quick taps cannot overwrite each other.
+    setData((current) => ({ ...current, ...(typeof nextData === 'function' ? nextData(current) : nextData) }));
     try {
       await runWithAuthRetry(action);
       return true;
@@ -1637,14 +1655,31 @@ export default function App() {
     });
 
   const saveHabitLog = (log) =>
-    saveData(() => store.saveHabitLog(userId, log), {
-      habitLogs: [log, ...data.habitLogs.filter((item) => item.id !== log.id)],
-    });
+    saveData(() => store.saveHabitLog(userId, log), (current) => ({
+      habitLogs: [log, ...current.habitLogs.filter((item) => item.id !== log.id)],
+    }));
 
   const saveMetricScan = (scan) =>
     saveData(() => store.saveMetricScan(userId, scan), {
       metricScans: [scan, ...data.metricScans.filter((item) => item.id !== scan.id)].sort((a, b) => b.date.localeCompare(a.date)),
     });
+
+  // A cardio entry is a finished session from the moment it is logged. It never becomes the active workout.
+  const saveCardio = async ({ activity, minutes, avgHeartRate, date }) => {
+    const cardio = { activity, minutes, avgHeartRate };
+    const summary = cardioSummary(cardio);
+    const started = sessionTimestampForDate(date);
+    const entry = {
+      id: uid('session'), plannedWorkoutId: null, routineName: '', startedAt: null, restTimer: null,
+      dateStarted: started, dateCompleted: date === todayISO() ? new Date().toISOString() : started,
+      status: 'completed', title: CARDIO_WORKOUT_TYPE, workoutType: CARDIO_WORKOUT_TYPE,
+      warmUp: '', coolDown: '', strength: '', wod: '', workoutDescription: summary, crossFitWorkout: summary,
+      notes: '', cardio, exerciseLogs: [],
+    };
+    const saved = await saveData(() => store.saveSession(userId, entry), (current) => ({ workoutSessions: [entry, ...current.workoutSessions] }));
+    if (saved) setNotice(`${summary} logged.`);
+    return saved;
+  };
 
   const importLegacy = async () => {
     const legacy = buildLegacyImport();
@@ -1729,6 +1764,8 @@ export default function App() {
             session={session}
             resumeSession={resumeSession}
             discardSession={discardSession}
+            saveHabitLog={saveHabitLog}
+            saveCardio={saveCardio}
             reviewPlan={reviewPlan}
             saveRoutine={setRoutineSource}
             setActiveTab={tab => { if (tab === 'plan') setDraft(null); setActiveTab(tab); }}

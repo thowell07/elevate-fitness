@@ -159,12 +159,12 @@ export const presetExercises = [
 ];
 
 export const defaultHabits = [
-  { id: 'sleep', name: '7 Hours Sleep' },
-  { id: 'creatine', name: 'Creatine - 5 g' },
-  { id: 'meditation', name: 'Meditation' },
-  { id: 'water', name: '3L Water' },
-  { id: 'protein', name: 'Protein Goal' },
-  { id: 'steps', name: '8k+ Steps - 10k Target' },
-  { id: 'mobility', name: 'Stretch / Mobility' },
-  { id: 'special-time-dalton', name: 'Special Time - Dalton' }
+  { id: 'sleep', name: '7 Hours Sleep', short: 'Sleep 7h' },
+  { id: 'creatine', name: 'Creatine - 5 g', short: 'Creatine' },
+  { id: 'meditation', name: 'Meditation', short: 'Meditate' },
+  { id: 'water', name: '3L Water', short: 'Water 3L' },
+  { id: 'protein', name: 'Protein Goal', short: 'Protein' },
+  { id: 'steps', name: '8k+ Steps - 10k Target', short: 'Steps 8k' },
+  { id: 'mobility', name: 'Stretch / Mobility', short: 'Mobility' },
+  { id: 'special-time-dalton', name: 'Special Time - Dalton', short: 'Dalton time' }
 ];
