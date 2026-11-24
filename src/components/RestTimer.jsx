@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { formatDuration, remainingRest, nextSet } from '../lib/training.js';
+import { formatDuration, remainingRest, upcomingSet } from '../lib/training.js';
 
 // The inline timer and the pill never render together, so they share one sound preference and audio context.
 const shared = { sound: false, audio: null, sounded: '' };
@@ -36,7 +36,7 @@ export default function RestTimer({ session, updateSession, openWorkout, variant
   }, [remaining, timer, sound, session?.id]);
   if (!timer || session.status !== 'active') return null;
 
-  const next = nextSet(session);
+  const next = upcomingSet(session);
   const ready = remaining === 0;
   const paused = timer.pausedSeconds != null;
   const label = ready ? 'Rest complete' : paused ? 'Rest paused' : 'Rest';

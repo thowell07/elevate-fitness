@@ -25,6 +25,35 @@ export const nextSet = (session) => {
   return null;
 };
 
+// The set that follows the one just checked, wherever it sits in the workout.
+// Same exercise first (later sets, then any skipped earlier ones), then the next
+// exercise down the list, wrapping to the top. Sets can be checked in any order.
+export const nextSetAfter = (session, logId, setId) => {
+  const logs = session?.exerciseLogs || [];
+  const at = logs.findIndex(log => log.id === logId);
+  if (at < 0) return nextSet(session);
+  const open = (log, from = 0) => {
+    const sets = log.sets || [];
+    for (let i = from; i < sets.length; i++) if (!sets[i].completed) return { log, set: sets[i], index: i };
+    return null;
+  };
+  const current = logs[at];
+  const done = (current.sets || []).findIndex(set => set.id === setId);
+  const sameExercise = open(current, done + 1) || open(current);
+  if (sameExercise) return sameExercise;
+  for (let step = 1; step < logs.length; step++) {
+    const found = open(logs[(at + step) % logs.length]);
+    if (found) return found;
+  }
+  return null;
+};
+
+// What the screen treats as "next": the set after the running timer's set, else program order.
+export const upcomingSet = (session) => {
+  const timer = session?.restTimer;
+  return (timer && nextSetAfter(session, timer.logId, timer.setId)) || nextSet(session);
+};
+
 // A repeat is a new editable plan, never a copy of a completed session's identity.
 // Only performed sets become targets; skipped work is not silently prescribed.
 export const repeatAsPlan = (source, date = todayISO()) => ({
