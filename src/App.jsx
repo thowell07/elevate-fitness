@@ -13,6 +13,7 @@ import Home from 'lucide-react/dist/esm/icons/home.js';
 import ListChecks from 'lucide-react/dist/esm/icons/list-checks.js';
 import LogOut from 'lucide-react/dist/esm/icons/log-out.js';
 import Plus from 'lucide-react/dist/esm/icons/plus.js';
+import Minus from 'lucide-react/dist/esm/icons/minus.js';
 import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw.js';
 import Repeat2 from 'lucide-react/dist/esm/icons/repeat-2.js';
 import Search from 'lucide-react/dist/esm/icons/search.js';
@@ -23,7 +24,7 @@ import X from 'lucide-react/dist/esm/icons/x.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { createOfflineStore } from './lib/offlineStore';
-import { completedSetCount, isRoutine, makeRestTimer, nextSet, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
+import { completedSetCount, isRoutine, makeRestTimer, upcomingSet, repeatAsPlan, resumableSessions, restSecondsFor, workoutName } from './lib/training';
 import RestTimer from './components/RestTimer';
 import PullUpProgress from './components/PullUpProgress';
 import HabitTiles from './components/HabitTiles';
@@ -740,8 +741,9 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const wod = crossFit ? crossFitWodValue(session) : '';
   const exerciseLogs = session.exerciseLogs || [];
   const totalSets = exerciseLogs.reduce((n, log) => n + log.sets.length, 0);
-  const upcoming = nextSet(session);
-  // Rest counts down just above the next set. A collapsed exercise moves it to the top of the screen.
+  const upcoming = upcomingSet(session);
+  // Rest counts down just above the set that follows the one just checked, in whatever order sets are done.
+  // A collapsed exercise moves it to the top of the screen.
   const restInline = Boolean(session.restTimer && upcoming && !upcoming.log.collapsed);
 
   const patchLog = (logId, updater) => {
@@ -796,12 +798,29 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
   const swapExercise = (logId, exercise) => {
     const old = session.exerciseLogs.find(log => log.id === logId);
     if (old?.sets.some(set => set.completed)) {
-      addExercise(exercise);
+      // Keep the checked sets of the old exercise; its unchecked sets are being replaced, so drop them.
+      const kept = { ...old, sets: old.sets.filter(set => set.completed) };
+      updateSession({
+        ...session,
+        exerciseLogs: [...session.exerciseLogs.map(log => log.id === logId ? kept : log), createExerciseLog(exercise, data.workoutSessions)],
+      });
     } else {
       const replacement = createExerciseLog(exercise, data.workoutSessions);
       patchLog(logId, () => ({ ...replacement, id: logId }));
     }
     setSwapFor(null);
+  };
+  // Drop the last set. A checked set asks first, since it holds recorded work.
+  const removeLastSet = (logId) => {
+    const log = session.exerciseLogs.find(item => item.id === logId);
+    if (!log || log.sets.length < 2) return;
+    const last = log.sets.at(-1);
+    if (last.completed && !window.confirm(`Remove set ${log.sets.length}? It is already checked.`)) return;
+    updateSession({
+      ...session,
+      restTimer: session.restTimer?.setId === last.id ? null : session.restTimer,
+      exerciseLogs: session.exerciseLogs.map(item => item.id === logId ? { ...item, sets: item.sets.slice(0, -1) } : item),
+    });
   };
   const saveAndSwapCustomExercise = async (logId, exercise) => {
     if (await saveCustomExercise(exercise)) swapExercise(logId, exercise);
@@ -898,6 +917,7 @@ const ActiveWorkout = ({ session, exercises, data, updateSession, finishSession,
                 <div className="button-row wrap">
                   {exercise.tracking !== 'time' && exercise.tracking !== 'bodyweight_reps' && <button className="text-button" onClick={() => patchAllSetWeights(log.id, log.sets[0]?.actualWeight || '')}>Use first weight for all sets</button>}
                   <button className="text-button" onClick={() => addSet(log.id)}><Plus size={16} /> Add set</button>
+                  {log.sets.length > 1 && <button className="text-button" onClick={() => removeLastSet(log.id)} aria-label={`Remove set ${log.sets.length} of ${log.exerciseName}`}><Minus size={16} /> Remove set</button>}
                   <button className="text-button" onClick={() => setSwapFor(swapFor === log.id ? null : log.id)}><Repeat2 size={16} /> Swap exercise</button>
                   <button className="text-button danger" onClick={() => removeExercise(log.id)}><Trash2 size={16} /> Remove</button>
                 </div>
