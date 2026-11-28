@@ -392,6 +392,8 @@ button.habit-cell.is-today { border-color: var(--ink); }
 .metric-hero-grid > div { min-width: 0; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .metric-hero-grid > div:nth-child(odd) { padding-right: 12px; border-right: 1px solid var(--line); }
 .metric-hero-grid > div:nth-child(even) { padding-left: 12px; }
+/* A fifth reading (trunk fat) takes the full row. */
+.metric-hero-grid > div:last-child:nth-child(odd) { grid-column: 1 / -1; padding-right: 0; border-right: 0; }
 .metric-hero-grid dt { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .metric-hero-grid dd { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; margin: 2px 0 0; }
 .metric-value { font-family: var(--display); font-weight: 800; font-size: 46px; line-height: .95; font-variant-numeric: tabular-nums; }
@@ -399,7 +401,7 @@ button.habit-cell.is-today { border-color: var(--ink); }
 .metric-delta { color: var(--muted); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .metric-delta.good, .metric-toggle small.good, .single-metric-summary small.good { color: var(--good); }
 .metric-delta.bad { color: var(--bad); }
-.metric-toggle-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.metric-toggle-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .metric-toggle { display: grid; align-content: center; justify-items: start; gap: 1px; min-width: 0; min-height: 64px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius); background: transparent; color: var(--muted); text-align: left; }
 .metric-toggle.active { border: 2px solid var(--ink); background: var(--surface); color: var(--ink); }
 .metric-toggle strong { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
@@ -440,8 +442,123 @@ button.habit-cell.is-today { border-color: var(--ink); }
 .bottom-nav button.active { color: var(--ink); box-shadow: inset 0 3px 0 var(--accent); }
 .bottom-nav span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Food: what's left today, say what you ate, check, save */
+.food-screen { gap: 18px; }
+.food-screen .chip { min-height: 44px; }
+.food-screen .chip-row { flex-wrap: wrap; overflow: visible; }
+.food-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.food-title { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: .95; text-transform: uppercase; }
+.food-day-switch { display: flex; align-items: center; gap: 0; margin-right: -10px; color: var(--muted); font-size: 14px; white-space: nowrap; }
+.food-left { display: grid; }
+.food-left-grid { display: grid; grid-template-columns: 1fr 1fr; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+.food-left-grid > div { display: grid; align-content: start; gap: 7px; min-width: 0; padding: 10px 0 12px; }
+.food-left-grid > div:first-child { padding-right: 14px; border-right: 1px solid var(--line); }
+.food-left-grid > div:last-child { padding-left: 14px; }
+.food-left-num { display: flex; align-items: flex-end; min-height: 68px; font-family: var(--display); font-weight: 800; font-size: 76px; line-height: .9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-left-num.is-long { font-size: 64px; }
+.food-left-num.is-text { font-size: 34px; line-height: 1; white-space: normal; text-transform: uppercase; }
+.food-left-num small { margin: 0 0 4px 5px; font-family: var(--text); font-size: 14px; font-weight: 700; }
+.food-left-sub { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.goal-scale.is-over span { background: var(--bad); }
+.food-macros { margin: 0; border-top: 0; }
+.food-macros li { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: baseline; gap: 12px; padding: 9px 0; }
+.food-macros .muted { font-size: 14px; font-variant-numeric: tabular-nums; }
+.food-band { display: flex; align-items: center; gap: 14px; margin-inline: calc(var(--gutter) * -1); padding: 14px var(--gutter); border: 0; border-block: 2px solid var(--ink); background: var(--surface); color: var(--ink); text-align: left; }
+.food-band:disabled { opacity: .55; }
+.food-mic { display: grid; place-items: center; flex: none; width: 56px; height: 64px; border-radius: var(--radius); background: var(--accent); color: var(--on-accent); }
+.food-band-text { display: grid; gap: 4px; min-width: 0; }
+.food-band-text strong { font-family: var(--display); font-weight: 800; font-size: 27px; line-height: .95; text-transform: uppercase; }
+.food-band-text small { font-size: 14px; line-height: 1.3; }
+.food-day { display: grid; gap: 4px; }
+.food-meals { margin: 0; padding: 0; list-style: none; }
+.food-meal { border-bottom: 1px solid var(--line); }
+.food-meal.is-new { margin-inline: calc(var(--gutter) * -1); padding-inline: var(--gutter); background: var(--good-soft); }
+.food-meal-row { display: flex; justify-content: space-between; gap: 14px; width: 100%; min-height: 56px; padding: 9px 0; border: 0; background: transparent; color: var(--ink); text-align: left; }
+.food-meal-main { display: grid; gap: 2px; min-width: 0; }
+.food-meal-time { margin-left: 6px; color: var(--muted); font-size: 13px; }
+.food-meal-summary { overflow: hidden; color: var(--muted); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.food-meal-num { display: grid; justify-items: end; align-content: start; gap: 2px; white-space: nowrap; }
+.food-meal-num b { font-family: var(--display); font-weight: 800; font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; }
+.food-meal-num small { font-size: 13px; font-variant-numeric: tabular-nums; }
+.food-meal-detail { display: grid; gap: 2px; padding-bottom: 6px; }
+.food-meal-actions { gap: 0 20px; }
+.food-items { margin: 0; padding: 0; list-style: none; }
+.food-items li { display: grid; gap: 4px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.food-meal-detail .food-items li { padding: 8px 0 8px 12px; border-bottom: 0; border-left: 2px solid var(--line); }
+.food-item-top, .food-item-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.food-item-top strong { min-width: 0; overflow-wrap: anywhere; }
+.food-item-bottom > span { min-width: 0; color: var(--muted); font-size: 14px; }
+.food-item-bottom b { font-size: 15px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.food-meal-macros { color: var(--ink); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-macro-strip { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; gap: 0 8px; margin: 2px 0 0; }
+.food-macro-strip > div { display: flex; flex-direction: column-reverse; min-width: 0; }
+.food-macro-strip dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.food-macro-strip dd { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-macro-strip dd small { margin-left: 2px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.food-items.is-editable .food-item-top, .food-items.is-editable .food-item-bottom { align-items: center; }
+.food-item-controls { display: flex; flex: none; align-items: center; gap: 2px; margin-right: -10px; }
+span.food-basis, button.food-basis > span { flex: none; padding: 2px 8px; border: 1px solid var(--muted); border-radius: var(--radius); color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+span.food-basis.is-weighed, button.food-basis.is-weighed > span { border-color: var(--ink); background: var(--ink); color: var(--ground); }
+button.food-basis { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; border: 0; background: transparent; }
+.food-item-source { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.food-grams { flex: none; width: 96px; }
+.food-grams input { min-height: 44px; padding: 8px 30px 8px 10px; font-size: 16px; }
+.unit-input.food-grams.has-unit input { padding-right: 30px; }
+.food-grams input[aria-invalid="true"] { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.food-links { justify-content: space-between; margin-top: -8px; }
+.food-help { color: var(--muted); font-size: 14px; }
+.food-compose-title { font-size: 44px; }
+.field textarea.food-dictation { min-height: 150px; font-size: 18px; }
+.food-confirm-head { display: grid; gap: 6px; }
+.food-confirm-body { display: grid; }
+.food-totals { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; margin: 0; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); }
+.food-totals > div { display: flex; flex-direction: column-reverse; justify-content: flex-end; gap: 2px; min-width: 0; padding: 10px 0 12px 10px; border-left: 1px solid var(--line); }
+.food-totals > div:first-child { padding-left: 0; border-left: 0; }
+.food-totals dt { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.food-totals dd { margin: 0; font-family: var(--display); font-weight: 800; font-size: 40px; line-height: .9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-totals dd small { margin-left: 3px; font-family: var(--text); font-size: 13px; font-weight: 700; }
+.food-no-items { padding: 12px 0; }
+.food-confirm-actions { justify-content: space-between; margin-top: -8px; }
+.food-confirm-actions > .secondary-button { flex: 0 0 auto; }
+.food-custom-range input[type=date] { min-width: 0; }
+.food-report-summary { display: grid; }
+.food-summary dd { display: grid; justify-content: start; gap: 2px; }
+.food-summary .metric-value { font-size: 44px; }
+.food-summary-sub { color: var(--muted); font-size: 14px; line-height: 1.35; }
+.food-facts { margin: 0; border-top: 0; }
+.food-facts li { padding: 10px 0; }
+.food-days { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; font-variant-numeric: tabular-nums; }
+.food-days .c-day { width: 78px; }
+.food-days .c-kcal { width: 56px; }
+.food-days .c-delta { width: 56px; }
+.food-days thead th { padding: 6px 0; border-bottom: 2px solid var(--ink); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-align: right; text-transform: uppercase; }
+.food-days th, .food-days td { padding: 8px 0; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.food-days thead th:first-child, .food-days tbody th { text-align: left; }
+.food-days tbody th { font-weight: 400; }
+.food-days .is-over { color: var(--accent-ink); font-weight: 700; }
+.food-days .is-hit { font-weight: 700; }
+.food-days .is-gap th, .food-days .is-gap td { color: var(--muted); }
+.food-days .is-gap td { padding-left: 6px; font-style: italic; text-align: left; }
+.food-form { padding: 12px; border-radius: var(--radius); background: var(--sunk); }
+.food-form small { margin-top: -6px; }
+.field .unit-input > span { letter-spacing: 0; text-transform: none; }
+.food-list { margin: 0; padding: 0; list-style: none; border-top: 2px solid var(--ink); }
+.food-list > li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.food-list > li.food-list-editing { display: grid; justify-content: stretch; gap: 4px; }
+.food-list-editing > .text-button { justify-self: start; }
+.food-list-name { display: grid; gap: 2px; min-width: 0; }
+.food-list-name strong { overflow-wrap: anywhere; }
+.food-list-name small { font-size: 13px; font-variant-numeric: tabular-nums; }
+.food-targets[open] { gap: 12px; }
+.food-back { align-self: flex-start; }
+
 @media (max-width: 360px) {
   :root { --gutter: 14px; }
+  .food-left-num { font-size: 64px; }
+  .food-left-num.is-long { font-size: 54px; }
+  .food-left-num.is-text { font-size: 30px; }
+  .food-totals dd { font-size: 34px; }
+  .food-summary .metric-value { font-size: 38px; }
   .display-title { font-size: 42px; }
   .today-primary .display-title { font-size: 46px; }
   .two-col, .three-col { grid-template-columns: 1fr; }

@@ -58,3 +58,28 @@ Run `npm test` for timer, repeat, recovery, metadata, progression, and outbox ch
 ### Account loading recovery
 
 Account reads use a bounded retry budget with per-attempt timeouts. Before the first successful load, a failed connection shows a recovery screen instead of zero workouts or scans. A failed refresh keeps the last device snapshot visible with a stale-data notice. Try again, returning to the app, reconnecting, and a 15-second retry check recover failed reads as well as queued saves. Save-queue success alone never clears a stale-read status. The InBody date field is constrained to its grid track for narrow Safari layouts.
+
+## Meal logging server function
+
+`api/log-meal.js` is a Vercel Node function served on the same origin at `POST /api/log-meal`. It takes the dictated meal (`text`), an optional `draft` to correct, and the saved foods (`myFoods`), and returns food items with grams, a weighed or eyeballed basis, the data source, and per-100 g values. Per-item macros and meal totals are computed in code from per-100 g values and grams; the model never supplies them.
+
+- Auth: the `Authorization: Bearer <Supabase access token>` header is checked with Supabase `auth.getUser`. When `VITE_ALLOWED_EMAILS` is set, the user's email must be on it.
+- Flow: a bounded tool loop (at most six model turns and 40 seconds, under the app's 45 second client timeout; `maxDuration` 60). Saved foods match first, then USDA FoodData Central lookups (Foundation, SR Legacy, Survey FNDDS), then web search for restaurant or branded items only (at most two searches), then the model's own estimate. The final answer arrives as a strict `submit_meal` tool call and is validated in code before anything is returned.
+- Code lives in `api/_lib/` (`auth.js`, `usda.js`, `prompt.js`, `mealAgent.js`, `validate.js`, `macros.js`). Tests are in `tests/logMeal.test.js` and use a fake model client, so `npm test` makes no paid calls.
+
+Server environment variables (set in Vercel, never with a `VITE_` prefix):
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | Required. Claude API key. |
+| `FDC_API_KEY` | USDA FoodData Central key. Falls back to `DEMO_KEY`, which is limited to a few requests per hour. |
+| `MEAL_MODEL` | Default `claude-haiku-5-5`. |
+| `MEAL_EFFORT` | Default `low`. Also `medium` or `high`. |
+| `MEAL_WEB_SEARCH` | Set to `off` to remove web search. |
+| `MEAL_WEB_SEARCH_TOOL` | Optional override of the web search tool version. |
+
+The function also reads `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_ALLOWED_EMAILS`, which the project already has.
+
+To step up to Sonnet 5.5, set `MEAL_MODEL=claude-sonnet-5-5` and redeploy. No code changes. Haiku uses the basic `web_search_20250305` tool and Sonnet uses `web_search_20260209` (dynamic filtering).
+
+`vite dev` does not serve `/api`. Use `vercel dev` to run the function locally, or use the app's preview mode, which uses a canned parser instead of this function.
