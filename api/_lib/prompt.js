@@ -69,7 +69,7 @@ export const SUBMIT_MEAL_TOOL = {
             basis: { type: 'string', enum: BASIS },
             source: { type: 'string', enum: SOURCES },
             sourceRef: {
-              type: ['string', 'null'],
+              anyOf: [{ type: 'string' }, { type: 'null' }],
               description: 'Saved food id for my_food, "fdc:<fdcId>" for usda, the page URL for web, null for estimate.',
             },
             per100g: per100gSchema,
@@ -78,8 +78,9 @@ export const SUBMIT_MEAL_TOOL = {
           additionalProperties: false,
         },
       },
-      meal: { type: ['string', 'null'], enum: [...MEALS, null] },
-      note: { type: ['string', 'null'], description: 'One short sentence about anything to double check, or null.' },
+      // Nullable fields use anyOf. The API rejects an enum under a ["string", "null"] type list.
+      meal: { anyOf: [{ type: 'string', enum: [...MEALS] }, { type: 'null' }], description: 'The meal he named, or null.' },
+      note: { anyOf: [{ type: 'string' }, { type: 'null' }], description: 'One short sentence about anything to double check, or null.' },
     },
     required: ['items', 'meal', 'note'],
     additionalProperties: false,
@@ -95,10 +96,13 @@ export function webSearchTool(model, override) {
   return { type, name: 'web_search', max_uses: 2 };
 }
 
-export function buildTools({ model, webSearch, webSearchToolType }) {
-  const tools = [LOOKUP_FOOD_TOOL];
+// strict false drops the schema guarantee (answers are still validated in code).
+export function buildTools({ model, webSearch, webSearchToolType, strict = true }) {
+  const plain = ({ strict: _strict, ...tool }) => tool;
+  const own = (tool) => (strict ? tool : plain(tool));
+  const tools = [own(LOOKUP_FOOD_TOOL)];
   if (webSearch) tools.push(webSearchTool(model, webSearchToolType));
-  tools.push(SUBMIT_MEAL_TOOL);
+  tools.push(own(SUBMIT_MEAL_TOOL));
   return tools;
 }
 

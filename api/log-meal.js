@@ -93,7 +93,7 @@ export function createHandler({
       anthropicPromise ||= Promise.resolve(getAnthropic(env));
       const anthropic = await anthropicPromise;
 
-      const result = await runMealAgent({
+      const { degraded, ...result } = await runMealAgent({
         text,
         draft,
         myFoods,
@@ -102,6 +102,9 @@ export function createHandler({
         fetch,
         config: configFromEnv(env),
       });
+      // Counts only. Never the meal text or the items.
+      logger.info?.(`log-meal 200 model=${result.model} items=${result.items.length} searches=${result.searches}`);
+      if (degraded) logger.warn?.(`log-meal stepped down to ${degraded.rung}. ${degraded.rejections.join(' | ')}`);
       send(res, 200, result);
     } catch (err) {
       if (isMealError(err)) {
