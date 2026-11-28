@@ -532,3 +532,41 @@ test('upstream rejections name what to check and log the reason without the key'
   assert.ok(!res.body.includes('tools.1.type'));
   assert.ok(logged.some((m) => m.includes('tools.1.type: unsupported')));
 });
+
+test('tool schemas avoid enum under a type list, which the API rejects', () => {
+  const walk = (node, path = 'schema') => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node.type) && node.enum) assert.fail(`${path} has enum under a type list`);
+    for (const [key, value] of Object.entries(node)) walk(value, `${path}.${key}`);
+  };
+  for (const tool of buildTools({ model: 'claude-haiku-5-5', webSearch: true })) walk(tool.input_schema, tool.name);
+  const loose = buildTools({ model: 'claude-haiku-5-5', webSearch: false, strict: false });
+  assert.deepEqual(loose.map((t) => t.name), ['lookup_food', 'submit_meal']);
+  assert.ok(loose.every((t) => !('strict' in t)));
+});
+
+test('a rejected request shape steps down and still returns the meal', async () => {
+  const seen = [];
+  const good = reply('tool_use', [toolUse('submit_meal', { items: [eggItem], meal: 'breakfast', note: null })]);
+  const anthropic = { messages: { create: async (params) => {
+    seen.push(params.tools);
+    if (params.tools.some((t) => t.strict)) throw Object.assign(new Error('400'), { status: 400, error: { error: { type: 'invalid_request_error', message: 'tools.2.custom: Invalid schema' } } });
+    return good;
+  } } };
+  const res = fakeRes();
+  const warned = [];
+  await createHandler({ env: { ANTHROPIC_API_KEY: 'test' }, getVerifier: allowAll, getAnthropic: () => anthropic, logger: { error: () => {}, warn: (m) => warned.push(m) } })(
+    { method: 'POST', headers: { authorization: 'Bearer good' }, body: { text: 'two eggs for breakfast' } }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(seen.length, 2);
+  assert.ok(seen[1].some((t) => t.name === 'web_search'));
+  assert.ok(!('degraded' in res.json()));
+  assert.ok(warned.some((m) => m.includes('stepped down to no_strict') && m.includes('Invalid schema')));
+});
+
+test('a rejected key or empty account does not step down', async () => {
+  let calls = 0;
+  const anthropic = { messages: { create: async () => { calls += 1; throw Object.assign(new Error('x'), { status: 401 }); } } };
+  await assert.rejects(runMealAgent({ text: 'eggs', anthropic, config: { model: 'claude-haiku-5-5', effort: 'low', webSearch: true, fdcApiKey: 'k' } }), (e) => e.code === 'upstream_auth');
+  assert.equal(calls, 1);
+});

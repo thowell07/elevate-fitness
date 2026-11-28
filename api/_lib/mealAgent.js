@@ -68,7 +68,16 @@ export async function runMealAgent({
   today = new Date().toISOString().slice(0, 10),
 }) {
   const startedAt = now();
-  const tools = buildTools(config);
+  // If the service rejects the request shape (400), step down once per rung and
+  // try again: first without strict schemas, then also without web search.
+  // Answers are validated in code either way.
+  const rungs = [
+    { name: 'full', tools: buildTools(config) },
+    { name: 'no_strict', tools: buildTools({ ...config, strict: false }) },
+    ...(config.webSearch ? [{ name: 'no_strict_no_web', tools: buildTools({ ...config, strict: false, webSearch: false }) }] : []),
+  ];
+  let rung = 0;
+  const rejections = [];
   const messages = [{ role: 'user', content: buildUserMessage({ text, draft, myFoods, today }) }];
   let searches = 0;
   let nudged = false;
@@ -80,24 +89,30 @@ export async function runMealAgent({
     if (remaining < 3_000) throw new MealError(503, 'Reading the meal took too long. Try again.', { code: 'timeout' });
 
     let response;
-    try {
-      response = await anthropic.messages.create(
-        {
-          model: config.model,
-          max_tokens: limits.maxTokens,
-          // Automatic caching of the growing conversation within this loop,
-          // plus an explicit breakpoint after the stable tools + system prefix.
-          cache_control: { type: 'ephemeral' },
-          system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-          tools,
-          tool_choice: { type: 'auto' },
-          output_config: { effort: config.effort },
-          messages,
-        },
-        { timeout: Math.min(limits.callTimeoutMs, remaining - 1_000), maxRetries: 1 },
-      );
-    } catch (err) {
-      throw fromUpstreamError(err);
+    for (;;) {
+      try {
+        response = await anthropic.messages.create(
+          {
+            model: config.model,
+            max_tokens: limits.maxTokens,
+            // Automatic caching of the growing conversation within this loop,
+            // plus an explicit breakpoint after the stable tools + system prefix.
+            cache_control: { type: 'ephemeral' },
+            system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+            tools: rungs[rung].tools,
+            tool_choice: { type: 'auto' },
+            output_config: { effort: config.effort },
+            messages,
+          },
+          { timeout: Math.min(limits.callTimeoutMs, remaining - 1_000), maxRetries: 1 },
+        );
+        break;
+      } catch (err) {
+        const mapped = fromUpstreamError(err);
+        if (mapped.code !== 'upstream_rejected' || err?.status !== 400 || rung + 1 >= rungs.length) throw mapped;
+        rejections.push(`${rungs[rung].name}: ${mapped.detail || '400'}`);
+        rung += 1;
+      }
     }
 
     if (response?.model) servedModel = response.model;
@@ -130,6 +145,8 @@ export async function runMealAgent({
           note,
           model: servedModel,
           searches,
+          // Server log only; the handler strips it before replying.
+          degraded: rejections.length ? { rung: rungs[rung].name, rejections } : null,
         };
       } catch (err) {
         if (repairAsked || turn + 1 >= limits.maxTurns) throw err;
