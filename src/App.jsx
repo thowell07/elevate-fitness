@@ -21,6 +21,7 @@ import Settings from 'lucide-react/dist/esm/icons/settings.js';
 import StickyNote from 'lucide-react/dist/esm/icons/sticky-note.js';
 import Trash2 from 'lucide-react/dist/esm/icons/trash-2.js';
 import X from 'lucide-react/dist/esm/icons/x.js';
+import Utensils from 'lucide-react/dist/esm/icons/utensils.js';
 import { EXERCISE_GROUPS, defaultHabits, presetExercises } from './data/exercises';
 import { createPreviewStore, createSupabaseStore } from './lib/store';
 import { createOfflineStore } from './lib/offlineStore';
@@ -30,6 +31,8 @@ import PullUpProgress from './components/PullUpProgress';
 import HabitTiles from './components/HabitTiles';
 import CardioLog from './components/CardioLog';
 import LiftsView, { LiftTrend } from './components/LiftsView';
+import FoodView from './components/FoodView';
+import { sortEntries, sortFoods } from './lib/nutrition';
 import { isAllowedEmail, isAuthTokenError, isSupabaseConfigured, supabase } from './lib/supabase';
 import { buildLegacyImport, getLegacySummary } from './lib/migration';
 import { addDays, downloadJSON, formatDate, formatShortDate, localDateKey, normalizeSet, todayISO, uid } from './lib/utils';
@@ -42,11 +45,16 @@ const emptyData = {
   exerciseNotes: {},
   metricScans: [],
   habitLogs: [],
+  foodEntries: [],
+  myFoods: [],
+  nutritionTargets: null,
+  nutritionReady: true,
 };
 
 const navItems = [
   { id: 'home', label: 'Today', icon: Home },
   { id: 'plan', label: 'Track', icon: CalendarPlus },
+  { id: 'food', label: 'Food', icon: Utensils },
   { id: 'history', label: 'History', icon: History },
   { id: 'habits', label: 'Habits', icon: CheckCircle2 },
   { id: 'metrics', label: 'InBody', icon: BarChart3 },
@@ -1182,6 +1190,8 @@ const metricDefinitions = [
   { key: 'skeletalMuscleMass', label: 'SMM', unit: 'lb', goal: 'up' },
   { key: 'percentBodyFat', label: 'PBF', unit: '%', goal: 'down' },
   { key: 'bodyFatMass', label: 'BFM', unit: 'lb', goal: 'down' },
+  // Trunk fat is the abdominal trend number from the InBody result sheet.
+  { key: 'trunkFatMass', label: 'Trunk Fat', unit: 'lb', goal: 'down' },
 ];
 
 // A blank reading is missing, never zero.
@@ -1304,11 +1314,11 @@ const InBodyProgressChart = ({ scans }) => {
 };
 
 const MetricsView = ({ scans, saveMetricScan }) => {
-  const [draft, setDraft] = useState({ date: todayISO(), weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '' });
+  const [draft, setDraft] = useState({ date: todayISO(), weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '', trunkFatMass: '' });
   const [problem, setProblem] = useState('');
   const save = () => {
     // Postgres rejects text in numeric columns, so catch it here before it reaches the sync queue.
-    const labels = { weight: 'Weight', skeletalMuscleMass: 'SMM', percentBodyFat: 'PBF', bodyFatMass: 'Body Fat Mass' };
+    const labels = { weight: 'Weight', skeletalMuscleMass: 'SMM', percentBodyFat: 'PBF', bodyFatMass: 'Body Fat Mass', trunkFatMass: 'Trunk Fat Mass' };
     const values = Object.fromEntries(Object.keys(labels).map(key => [key, String(draft[key]).trim()]));
     if (!draft.date) return setProblem('Choose the scan date.');
     if (!values.weight) return setProblem('Enter your weight.');
@@ -1317,7 +1327,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
     if (invalid) return setProblem(`${labels[invalid]} must be a number, like 185.4.`);
     setProblem('');
     saveMetricScan({ id: uid('metric'), date: draft.date, ...values });
-    setDraft({ ...draft, weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '' });
+    setDraft({ ...draft, weight: '', skeletalMuscleMass: '', percentBodyFat: '', bodyFatMass: '', trunkFatMass: '' });
   };
   // Offline saves prepend unsorted, so order by scan date before choosing the latest.
   const ordered = [...scans].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
@@ -1325,7 +1335,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
   const previous = ordered[1];
   return (
     <div className="screen">
-      <ScreenHeader label="InBody" title="Body composition" meta="Weight, skeletal muscle mass, body fat percent, and body fat mass." />
+      <ScreenHeader label="InBody" title="Body composition" meta="Weight, skeletal muscle mass, body fat percent, body fat mass, and trunk fat." />
       {latest && (
         <section className="metric-hero" aria-label="Latest scan compared with the previous scan">
           <p className="label">Latest · {formatDate(latest.date)}{previous ? ` · vs ${formatShortDate(previous.date)}` : ''}</p>
@@ -1358,6 +1368,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
           <Field label="SMM"><input inputMode="decimal" value={draft.skeletalMuscleMass} onChange={(event) => setDraft({ ...draft, skeletalMuscleMass: event.target.value })} placeholder="lb" /></Field>
           <Field label="PBF"><input inputMode="decimal" value={draft.percentBodyFat} onChange={(event) => setDraft({ ...draft, percentBodyFat: event.target.value })} placeholder="%" /></Field>
           <Field label="Body Fat Mass"><input inputMode="decimal" value={draft.bodyFatMass} onChange={(event) => setDraft({ ...draft, bodyFatMass: event.target.value })} placeholder="lb" /></Field>
+          <Field label="Trunk Fat Mass"><input inputMode="decimal" value={draft.trunkFatMass} onChange={(event) => setDraft({ ...draft, trunkFatMass: event.target.value })} placeholder="lb" /></Field>
         </div>
         {problem && <p className="notice error" role="alert">{problem}</p>}
         <button className="primary-button" onClick={save}>Save scan</button>
@@ -1367,7 +1378,7 @@ const MetricsView = ({ scans, saveMetricScan }) => {
         {ordered.map((scan) => (
           <div className="metric-row" key={scan.id}>
             <strong>{formatDate(scan.date)}</strong>
-            <span>{scan.weight} lb · PBF {scan.percentBodyFat || '-'}% · BFM {scan.bodyFatMass || '-'} lb</span>
+            <span>{scan.weight} lb · PBF {scan.percentBodyFat || '-'}% · BFM {scan.bodyFatMass || '-'} lb{toMetricNumber(scan.trunkFatMass) !== null ? ` · Trunk ${scan.trunkFatMass} lb` : ''}</span>
           </div>
         ))}
         {!scans.length && <p className="empty">No scans yet.</p>}
@@ -1701,6 +1712,30 @@ export default function App() {
     return saved;
   };
 
+  // Meals, saved foods and targets. Deletes confirm here, like workout deletes.
+  const saveFoodEntry = (entry) =>
+    saveData(() => store.saveFoodEntry(userId, entry), (current) => ({
+      foodEntries: sortEntries([entry, ...current.foodEntries.filter((item) => item.id !== entry.id)]),
+    }));
+  const deleteFoodEntry = async (entry) => {
+    if (!window.confirm(`Delete this ${entry.meal || 'meal'} from ${formatDate(entry.date)}? This cannot be undone.`)) return false;
+    return saveData(() => store.deleteFoodEntry(userId, entry.id), (current) => ({
+      foodEntries: current.foodEntries.filter((item) => item.id !== entry.id),
+    }));
+  };
+  const saveMyFood = (food) =>
+    saveData(() => store.saveMyFood(userId, food), (current) => ({
+      myFoods: sortFoods([food, ...current.myFoods.filter((item) => item.id !== food.id)]),
+    }));
+  const deleteMyFood = async (food) => {
+    if (!window.confirm(`Delete ${food.name} from My foods? Meals already logged keep their numbers.`)) return false;
+    return saveData(() => store.deleteMyFood(userId, food.id), (current) => ({
+      myFoods: current.myFoods.filter((item) => item.id !== food.id),
+    }));
+  };
+  const saveNutritionTargets = (targets) =>
+    saveData(() => store.saveNutritionTargets(userId, targets), { nutritionTargets: { ...targets } });
+
   const importLegacy = async () => {
     const legacy = buildLegacyImport();
     for (const exercise of legacy.customExercises) await store.saveCustomExercise(userId, exercise);
@@ -1723,6 +1758,9 @@ export default function App() {
       exerciseNotes: data.exerciseNotes,
       habitLogs: data.habitLogs,
       inBodyScans: data.metricScans,
+      foodEntries: data.foodEntries,
+      myFoods: data.myFoods,
+      nutritionTargets: data.nutritionTargets,
       unsyncedChanges: store.failed(userId),
     });
   };
@@ -1826,6 +1864,7 @@ export default function App() {
         {activeTab === 'history' && <HistoryView sessions={data.workoutSessions} exportData={exportData} deleteSession={deleteWorkoutSession} reviewPlan={reviewPlan} saveRoutine={setRoutineSource} />}
         {activeTab === 'habits' && <HabitTracker habitLogs={data.habitLogs} saveHabitLog={saveHabitLog} />}
         {activeTab === 'metrics' && <MetricsView scans={data.metricScans} saveMetricScan={saveMetricScan} />}
+        {activeTab === 'food' && <FoodView data={data} saveFoodEntry={saveFoodEntry} deleteFoodEntry={deleteFoodEntry} saveMyFood={saveMyFood} deleteMyFood={deleteMyFood} saveNutritionTargets={saveNutritionTargets} />}
       </main>
       {activeTab !== 'active' && <RestTimer variant="pill" session={session} updateSession={saveActiveSession} openWorkout={() => setActiveTab('active')} />}
       <RoutineDialog source={routineSource} onClose={() => setRoutineSource(null)} onSave={persistRoutine} />

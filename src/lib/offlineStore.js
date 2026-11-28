@@ -1,18 +1,26 @@
 // User-scoped cache + durable outbox. Remote Supabase remains the source of truth.
 // Save calls resolve after the device copy is durable. UI reports pending cloud writes.
 import { uid } from './utils.js';
+import { sortEntries, sortFoods } from './nutrition.js';
 
 const PREFIX = 'elevate-offline-v1:';
-const collections = { saveSession: 'workoutSessions', savePlannedWorkout: 'plannedWorkouts', saveCustomExercise: 'customExercises', saveMetricScan: 'metricScans', saveHabitLog: 'habitLogs' };
+const collections = { saveSession: 'workoutSessions', savePlannedWorkout: 'plannedWorkouts', saveCustomExercise: 'customExercises', saveMetricScan: 'metricScans', saveHabitLog: 'habitLogs', saveFoodEntry: 'foodEntries', saveMyFood: 'myFoods' };
+const deletes = { deleteSession: 'workoutSessions', deleteFoodEntry: 'foodEntries', deleteMyFood: 'myFoods' };
+// Meal entries stay newest first and saved foods stay alphabetical however edits arrive.
+const ordering = { foodEntries: sortEntries, myFoods: sortFoods };
+const nutritionMethods = new Set(['saveFoodEntry', 'saveMyFood', 'deleteFoodEntry', 'deleteMyFood', 'saveNutritionTargets']);
+export const NUTRITION_NOT_READY = 'Nutrition needs a one-time database update before meals can be saved.';
 export const applyOperation = (bundle, operation) => {
   const { method, args } = operation;
   const next = { ...bundle };
   if (method === 'saveExerciseNote') next.exerciseNotes = { ...bundle.exerciseNotes, [args[0]]: args[1] };
-  else if (method === 'deleteSession') next.workoutSessions = (bundle.workoutSessions || []).filter(s => s.id !== args[0]);
+  else if (method === 'saveNutritionTargets') next.nutritionTargets = { ...args[0] };
+  else if (deletes[method]) next[deletes[method]] = (bundle[deletes[method]] || []).filter(s => s.id !== args[0]);
   else {
     const key = collections[method], item = args[0];
     next[key] = [item, ...(bundle[key] || []).filter(existing => method === 'saveHabitLog'
       ? !(existing.date === item.date && existing.habitId === item.habitId) : existing.id !== item.id)];
+    if (ordering[key]) next[key] = ordering[key](next[key]);
   }
   return next;
 };
@@ -138,10 +146,13 @@ export const createOfflineStore = (remote, { storage = localStorage, online = ()
       }
     },
   };
-  for (const method of [...Object.keys(collections), 'saveExerciseNote', 'deleteSession']) {
+  for (const method of [...Object.keys(collections), ...Object.keys(deletes), 'saveExerciseNote', 'saveNutritionTargets']) {
     store[method] = async (userId, ...args) => {
       const current = read(userId);
-      const target = typeof args[0] === 'string' ? args[0] : method === 'saveHabitLog' ? `${args[0].date}:${args[0].habitId}` : args[0].id;
+      // Before the migration runs, a queued meal would retry forever and hold every later workout save behind it.
+      if (nutritionMethods.has(method) && current.bundle?.nutritionReady === false) throw new Error(NUTRITION_NOT_READY);
+      const target = typeof args[0] === 'string' ? args[0] : method === 'saveHabitLog' ? `${args[0].date}:${args[0].habitId}`
+        : method === 'saveNutritionTargets' ? 'nutritionTargets' : args[0].id;
       // uid() and the JSON copy keep saves working where crypto.randomUUID or structuredClone is missing (plain-http LAN dev, older Safari).
       const operation = { id: uid('op'), method, target, args: typeof structuredClone === 'function' ? structuredClone(args) : JSON.parse(JSON.stringify(args)) };
       // Coalesce rapid input edits, preserving dependency order (plans before sessions).

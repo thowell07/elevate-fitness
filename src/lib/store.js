@@ -3,6 +3,11 @@ import { readQuery } from './readQuery';
 import { todayISO } from './utils';
 import { fromPlanRow, fromSessionRow } from './workoutRows';
 import { attachWorkoutDetails, createWorkoutDetails, DEFAULT_WORKOUT_TYPE } from './workoutDetails';
+import {
+  settleNutritionReads, sortEntries, sortFoods,
+  toFoodEntryRow, toMyFoodRow, toTargetsRow,
+} from './nutrition';
+import { previewNutritionSample } from './mealApi';
 
 const emptyBundle = {
   customExercises: [],
@@ -11,6 +16,10 @@ const emptyBundle = {
   exerciseNotes: {},
   metricScans: [],
   habitLogs: [],
+  foodEntries: [],
+  myFoods: [],
+  nutritionTargets: null,
+  nutritionReady: true,
 };
 
 const sortDesc = (items, field) => [...items].sort((a, b) => String(b[field] || '').localeCompare(String(a[field] || '')));
@@ -48,17 +57,23 @@ const toCustomRow = (userId, exercise) => ({
 export const createSupabaseStore = () => ({
   mode: 'supabase',
   async loadBundle(userId) {
-    const [customs, plans, sessions, notes, metrics, habits] = await Promise.all([
+    const [customs, plans, sessions, notes, metrics, habits, entries, foods, targets] = await Promise.all([
       readQuery(() => supabase.from('custom_exercises').select('*').eq('user_id', userId).order('name')),
       readQuery(() => supabase.from('planned_workouts').select('*').eq('user_id', userId).order('date', { ascending: false })),
       readQuery(() => supabase.from('workout_sessions').select('*').eq('user_id', userId).order('date_started', { ascending: false })),
       readQuery(() => supabase.from('exercise_notes').select('*').eq('user_id', userId)),
       readQuery(() => supabase.from('metric_scans').select('*').eq('user_id', userId).order('date', { ascending: false })),
       readQuery(() => supabase.from('habit_logs').select('*').eq('user_id', userId).order('date', { ascending: false })),
+      readQuery(() => supabase.from('food_entries').select('*').eq('user_id', userId).order('date', { ascending: false }).order('logged_at', { ascending: false })),
+      readQuery(() => supabase.from('my_foods').select('*').eq('user_id', userId).order('name')),
+      readQuery(() => supabase.from('nutrition_targets').select('*').eq('user_id', userId).limit(1)),
     ]);
 
     const error = [customs, plans, sessions, notes, metrics, habits].find((result) => result.error)?.error;
     if (error) throw error;
+    // Nutrition tables may not exist yet on the live database. Missing tables load as empty with nutritionReady false.
+    const settled = settleNutritionReads({ entries, foods, targets });
+    if (settled.error) throw settled.error;
 
     const plannedWorkouts = plans.data.map(fromPlanRow);
     const workoutSessions = sessions.data.map(fromSessionRow);
@@ -75,6 +90,7 @@ export const createSupabaseStore = () => ({
         skeletalMuscleMass: row.skeletal_muscle_mass,
         percentBodyFat: row.percent_body_fat,
         bodyFatMass: row.body_fat_mass,
+        trunkFatMass: row.trunk_fat_mass ?? null,
       })),
       habitLogs: habits.data.map((row) => ({
         id: row.id,
@@ -82,6 +98,7 @@ export const createSupabaseStore = () => ({
         habitId: row.habit_id,
         completed: row.completed,
       })),
+      ...settled.nutrition,
     };
   },
   async saveCustomExercise(userId, exercise) {
@@ -131,7 +148,7 @@ export const createSupabaseStore = () => ({
     if (error) throw error;
   },
   async saveMetricScan(userId, scan) {
-    const { error } = await supabase.from('metric_scans').upsert({
+    const row = {
       id: scan.id,
       user_id: userId,
       date: scan.date,
@@ -139,7 +156,10 @@ export const createSupabaseStore = () => ({
       skeletal_muscle_mass: scan.skeletalMuscleMass || null,
       percent_body_fat: scan.percentBodyFat || null,
       body_fat_mass: scan.bodyFatMass || null,
-    });
+    };
+    // Sent only when filled in, so a scan without trunk fat still saves on a database that predates the column.
+    if (scan.trunkFatMass !== undefined && scan.trunkFatMass !== null && scan.trunkFatMass !== '') row.trunk_fat_mass = scan.trunkFatMass;
+    const { error } = await supabase.from('metric_scans').upsert(row);
     if (error) throw error;
   },
   async saveHabitLog(userId, log) {
@@ -156,11 +176,35 @@ export const createSupabaseStore = () => ({
     );
     if (error) throw error;
   },
+  async saveFoodEntry(userId, entry) {
+    const { error } = await supabase.from('food_entries').upsert(toFoodEntryRow(userId, entry));
+    if (error) throw error;
+  },
+  async deleteFoodEntry(userId, entryId) {
+    const { error } = await supabase.from('food_entries').delete().eq('id', entryId).eq('user_id', userId);
+    if (error) throw error;
+  },
+  async saveMyFood(userId, food) {
+    const { error } = await supabase.from('my_foods').upsert(toMyFoodRow(userId, food));
+    if (error) throw error;
+  },
+  async deleteMyFood(userId, foodId) {
+    const { error } = await supabase.from('my_foods').delete().eq('id', foodId).eq('user_id', userId);
+    if (error) throw error;
+  },
+  async saveNutritionTargets(userId, targets) {
+    const { error } = await supabase.from('nutrition_targets').upsert(toTargetsRow(userId, targets), { onConflict: 'user_id' });
+    if (error) throw error;
+  },
 });
 
+// Bump when the preview seed changes shape. Older saved previews still load: missing keys fall back to the seed.
+const PREVIEW_KEY = 'elevate-preview-bundle-v2';
 export const createPreviewStore = () => {
+  const nutritionSeed = previewNutritionSample(todayISO());
   let bundle = {
     ...emptyBundle,
+    ...nutritionSeed,
     plannedWorkouts: [
       {
         id: 'preview-plan',
@@ -194,8 +238,8 @@ export const createPreviewStore = () => {
     ],
   };
   try {
-    const saved = sessionStorage.getItem('elevate-preview-bundle-v2');
-    if (saved) bundle = JSON.parse(saved);
+    const saved = sessionStorage.getItem(PREVIEW_KEY);
+    if (saved) bundle = { ...bundle, ...JSON.parse(saved), nutritionReady: true };
   } catch { /* A fresh preview still works when no saved sample exists. */ }
   const persist = (next) => {
     bundle = {
@@ -204,8 +248,11 @@ export const createPreviewStore = () => {
       plannedWorkouts: sortDesc(next.plannedWorkouts || bundle.plannedWorkouts, 'date'),
       workoutSessions: sortDesc(next.workoutSessions || bundle.workoutSessions, 'dateStarted'),
       metricScans: sortDesc(next.metricScans || bundle.metricScans, 'date'),
+      foodEntries: sortEntries(next.foodEntries || bundle.foodEntries || []),
+      myFoods: sortFoods(next.myFoods || bundle.myFoods || []),
     };
-    sessionStorage.setItem('elevate-preview-bundle-v2', JSON.stringify(bundle));
+    try { sessionStorage.setItem(PREVIEW_KEY, JSON.stringify(bundle)); }
+    catch { /* Preview data still lives in memory for this tab. */ }
   };
   return {
     mode: 'preview',
@@ -232,6 +279,21 @@ export const createPreviewStore = () => {
     },
     async saveHabitLog(_userId, log) {
       persist({ habitLogs: [log, ...bundle.habitLogs.filter((item) => item.id !== log.id)] });
+    },
+    async saveFoodEntry(_userId, entry) {
+      persist({ foodEntries: [entry, ...bundle.foodEntries.filter((item) => item.id !== entry.id)] });
+    },
+    async deleteFoodEntry(_userId, entryId) {
+      persist({ foodEntries: bundle.foodEntries.filter((item) => item.id !== entryId) });
+    },
+    async saveMyFood(_userId, food) {
+      persist({ myFoods: [food, ...bundle.myFoods.filter((item) => item.id !== food.id)] });
+    },
+    async deleteMyFood(_userId, foodId) {
+      persist({ myFoods: bundle.myFoods.filter((item) => item.id !== foodId) });
+    },
+    async saveNutritionTargets(_userId, targets) {
+      persist({ nutritionTargets: { ...targets } });
     },
   };
 };
