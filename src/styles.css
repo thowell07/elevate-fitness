@@ -489,6 +489,12 @@ button.habit-cell.is-today { border-color: var(--ink); }
 .food-item-top strong { min-width: 0; overflow-wrap: anywhere; }
 .food-item-bottom > span { min-width: 0; color: var(--muted); font-size: 14px; }
 .food-item-bottom b { font-size: 15px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.food-meal-macros { color: var(--ink); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-macro-strip { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; gap: 0 8px; margin: 2px 0 0; }
+.food-macro-strip > div { display: flex; flex-direction: column-reverse; min-width: 0; }
+.food-macro-strip dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.food-macro-strip dd { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.food-macro-strip dd small { margin-left: 2px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .food-items.is-editable .food-item-top, .food-items.is-editable .food-item-bottom { align-items: center; }
 .food-item-controls { display: flex; flex: none; align-items: center; gap: 2px; margin-right: -10px; }
 span.food-basis, button.food-basis > span { flex: none; padding: 2px 8px; border: 1px solid var(--muted); border-radius: var(--radius); color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }

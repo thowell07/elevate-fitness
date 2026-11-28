@@ -99,3 +99,10 @@ test('my foods and targets validate plainly', () => {
   assert.equal(F.parseGrams(''), null);
   assert.equal(F.parseGrams('2x'), null);
 });
+
+test('macro text shows protein, carbs and fat for a meal or an item', () => {
+  const values = { kcal: 1234.4, protein: 52.4, carbs: 60.6, fat: 17.5 };
+  assert.equal(F.macroText(values), 'P 52 g · C 61 g · F 18 g');
+  assert.equal(F.macroSentence(values), '1,234 kcal, 52 g protein, 61 g carbs, 18 g fat');
+  assert.equal(F.macroText(), 'P 0 g · C 0 g · F 0 g');
+});

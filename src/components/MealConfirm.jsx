@@ -4,6 +4,7 @@ import { computeItem, dayTotals, MEALS, remaining, sumItems } from '../lib/nutri
 import { parseMeal } from '../lib/mealApi.js';
 import { uid } from '../lib/utils.js';
 import { afterMealLine, gramsText, kcalText, mealForTime, mealLabel, parseGrams, sourceLabel } from './foodFormat.js';
+import MacroStrip from './MacroStrip.jsx';
 
 const toRows = (items = []) => items.map((item) => {
   const computed = computeItem(item);
@@ -116,8 +117,8 @@ export default function MealConfirm({ draft, today, entries, targets, myFoods, r
                       </label>
                       <span>{[item.quantityText, sourceLabel(item.source)].filter(Boolean).join(' · ')}</span>
                     </span>
-                    <b>{kcalText(item.kcal)} kcal · {gramsText(item.protein)} g P</b>
                   </div>
+                  <MacroStrip values={item} label={`Macros, ${item.name}`} />
                 </li>
               ))}
             </ul>

@@ -4,7 +4,8 @@ import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right.js';
 import Mic from 'lucide-react/dist/esm/icons/mic.js';
 import { dayTotals, entryFromParsed, remaining, resolveTargets, sortEntries } from '../lib/nutrition.js';
 import { addDays, todayISO } from '../lib/utils.js';
-import { dayHeading, gramsText, itemSummary, kcalText, longDate, macroLine, mealLabel, share, sourceLabel } from './foodFormat.js';
+import { dayHeading, gramsText, itemSummary, kcalText, longDate, macroLine, macroSentence, macroText, mealLabel, share, sourceLabel } from './foodFormat.js';
+import MacroStrip from './MacroStrip.jsx';
 import MealComposer from './MealComposer.jsx';
 import MealConfirm from './MealConfirm.jsx';
 import CoachReport from './CoachReport.jsx';
@@ -37,8 +38,9 @@ const MealRow = ({ entry, open, isNew, onToggle, onEdit, onDelete, canEdit }) =>
       <span className="food-meal-main">
         <span><b>{mealLabel(entry.meal)}</b><span className="food-meal-time">{timeText(entry.loggedAt)}</span></span>
         <span className="food-meal-summary">{itemSummary(entry.items) || 'No items'}</span>
+        <span className="food-meal-macros">{macroText(entry)}</span>
       </span>
-      <span className="food-meal-num"><b>{kcalText(entry.kcal)}</b><small>{gramsText(entry.protein)} g protein</small></span>
+      <span className="food-meal-num"><b>{kcalText(entry.kcal)}</b><small>kcal</small></span>
     </button>
     {open && (
       <div className="food-meal-detail">
@@ -46,7 +48,8 @@ const MealRow = ({ entry, open, isNew, onToggle, onEdit, onDelete, canEdit }) =>
           {(entry.items || []).map((item, index) => (
             <li key={index}>
               <div className="food-item-top"><strong>{item.name}</strong><span className={`food-basis ${item.basis === 'weighed' ? 'is-weighed' : ''}`}>{item.basis === 'weighed' ? 'Weighed' : 'Eyeballed'}</span></div>
-              <div className="food-item-bottom"><span>{[item.quantityText, `${gramsText(item.grams)} g`, sourceLabel(item.source)].filter(Boolean).join(' · ')}</span><b>{kcalText(item.kcal)} kcal · {gramsText(item.protein)} g P</b></div>
+              <div className="food-item-bottom"><span>{[item.quantityText, `${gramsText(item.grams)} g`, sourceLabel(item.source)].filter(Boolean).join(' · ')}</span></div>
+              <MacroStrip values={item} label={`Macros, ${item.name}`} />
             </li>
           ))}
         </ul>
@@ -110,7 +113,7 @@ export default function FoodView({ data, saveFoodEntry, deleteFoodEntry, saveMyF
     setDate(entry.date);
     setOpenId(null);
     setView('day');
-    setSaved({ id: entry.id, text: `${mealLabel(entry.meal)} ${editing ? 'updated' : 'saved'}. ${kcalText(entry.kcal)} kcal, ${gramsText(entry.protein)} g protein.` });
+    setSaved({ id: entry.id, text: `${mealLabel(entry.meal)} ${editing ? 'updated' : 'saved'}. ${macroSentence(entry)}.` });
     return true;
   };
 

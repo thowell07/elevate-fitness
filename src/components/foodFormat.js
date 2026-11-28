@@ -59,6 +59,11 @@ export const itemSummary = (items = []) => (items || []).map((item, index) => {
   return /^[A-Z]{2}/.test(short) ? short : short.charAt(0).toLowerCase() + short.slice(1);
 }).join(', ');
 
+// "P 42 g · C 55 g · F 12 g" for a meal or an item.
+export const macroText = (values = {}) => `P ${gramsText(values.protein)} g · C ${gramsText(values.carbs)} g · F ${gramsText(values.fat)} g`;
+// Spoken version for the saved message.
+export const macroSentence = (values = {}) => `${kcalText(values.kcal)} kcal, ${gramsText(values.protein)} g protein, ${gramsText(values.carbs)} g carbs, ${gramsText(values.fat)} g fat`;
+
 // Carbs and fat ledger lines. r is one macro from remaining().
 export const macroLine = (r) => ({
   eaten: `${gramsText(r.eaten)} of ${gramsText(r.target)} g`,
