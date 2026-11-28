@@ -4,7 +4,7 @@ import { addDays, slug } from './utils.js';
 import { computeItem, entryFromParsed, MEALS, sumItems } from './nutrition.js';
 
 export const MEAL_API_PATH = '/api/log-meal';
-export const MEAL_API_TIMEOUT_MS = 45000;
+export const MEAL_API_TIMEOUT_MS = 57000;
 
 const MESSAGES = {
   offline: 'You are offline. Connect and try again.',

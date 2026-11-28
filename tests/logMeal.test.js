@@ -240,7 +240,7 @@ test('submit_meal is a strict tool whose objects all forbid extra keys and requi
 test('web search version is chosen per model and can be turned off', () => {
   assert.equal(webSearchTool('claude-haiku-5-5').type, 'web_search_20250305');
   assert.equal(webSearchTool('claude-sonnet-5-5').type, 'web_search_20260209');
-  assert.equal(webSearchTool('claude-sonnet-5-5').max_uses, 2);
+  assert.equal(webSearchTool('claude-sonnet-5-5').max_uses, 5);
   assert.equal(webSearchTool('claude-haiku-5-5', 'web_search_20260209').type, 'web_search_20260209');
   assert.deepEqual(buildTools({ ...baseConfig, webSearch: false }).map((t) => t.name), ['lookup_food', 'submit_meal']);
   const env = configFromEnv({ MEAL_WEB_SEARCH: 'OFF', MEAL_EFFORT: 'bogus' });

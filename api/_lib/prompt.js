@@ -4,13 +4,17 @@
 
 import { BASIS, MEALS, SOURCES } from './validate.js';
 
+// Web searches allowed for one meal. Accuracy matters more than search cost here.
+export const MAX_WEB_SEARCHES = 5;
+
 export const SYSTEM_PROMPT = `You turn one person's spoken or typed description of a meal into a list of food items with gram amounts and nutrition values per 100 g. This is his private food log. Return data only: no health advice, no judgement, no commentary.
 
 How to work:
 1. Split the description into separate foods. Keep combined dishes as one item only when he names the dish as a whole ("a burrito bowl").
 2. For each food, check his saved foods first (listed in the request). A saved food matches when its name or an alias clearly refers to the same thing. For a match use source "my_food", sourceRef set to the saved food's id, and copy its per100g exactly. Use its serving size to convert counts ("two servings", "one scoop") to grams.
 3. For generic foods with no saved match, call lookup_food (USDA FoodData Central). Search with plain USDA-style words, and include the state that matters ("chicken breast cooked roasted", "rice white long grain cooked", "egg whole cooked fried"). Look up several foods at once by calling lookup_food several times in the same turn. Prefer Foundation and SR Legacy results over Survey (FNDDS) when they match equally well. Use source "usda" and sourceRef "fdc:<fdcId>" with the per100g values from the result you chose. If a result is missing protein, carbs or fat, fill that one value with your best estimate.
-4. Use web search only for restaurant menu items and branded packaged foods that USDA generic data cannot answer. Use source "web" and sourceRef set to the page URL you relied on. Search at most twice in total.
+4. Use web search whenever it is likely to make the numbers more accurate than your own estimate. Search for: restaurant, takeout, cafe and fast food items (find the restaurant's own published nutrition; when he does not name the place, a close published match for the same dish is still better than a guess); branded and packaged foods (the maker's label values); and dishes or products you do not know well, such as regional dishes, bakery items and prepared meals. Prefer the restaurant's or maker's own nutrition page, then a well known nutrition database. Do not search for plain generic foods that lookup_food answers well (plain meats, eggs, rice, fruit, vegetables). Use source "web" and sourceRef set to the page URL you relied on. You may search up to ${MAX_WEB_SEARCHES} times for one meal; put several items in one search when that works.
+   Published nutrition is usually per serving. For those items set grams to the serving weight (the published weight, or your best estimate when none is given) and work out per100g so that grams x per100g / 100 equals the published serving values. If he ate more or less than one serving, scale grams. If a search finds nothing usable, fall back to lookup_food or your own estimate and say so in the note.
 5. If lookup_food fails or nothing fits, use your own best estimate: source "estimate", sourceRef null.
 6. Convert every amount to grams. Ounces are weight (1 oz = 28.35 g). Use sensible household conversions for cups, spoons, slices, pieces and "a bowl". Decide whether a meat, grain or pasta amount is cooked or raw from what he said; if he did not say and it changes the numbers a lot, assume the usual way it is measured (meat by cooked weight when he describes a plate, raw weight when he describes a package; rice and pasta by cooked volume) and say which you assumed in the note. Never invent precision: round grams to a sensible figure.
 7. basis is "weighed" only when he gave a scale or label-precise amount: grams, ounces, "weighed", or a count of a labeled package or serving. Cups, spoons, handfuls, pieces of produce, "a bowl", "about", "some" are "eyeballed".
@@ -93,7 +97,7 @@ export const SUBMIT_MEAL_TOOL = {
 // the web search docs' supported model list). MEAL_WEB_SEARCH_TOOL overrides.
 export function webSearchTool(model, override) {
   const type = override || (/haiku/i.test(model) ? 'web_search_20250305' : 'web_search_20260209');
-  return { type, name: 'web_search', max_uses: 2 };
+  return { type, name: 'web_search', max_uses: MAX_WEB_SEARCHES };
 }
 
 // strict false drops the schema guarantee (answers are still validated in code).
