@@ -105,7 +105,7 @@ export function createHandler({
       send(res, 200, result);
     } catch (err) {
       if (isMealError(err)) {
-        if (err.status >= 500) logger.error?.(`log-meal ${err.status} ${err.code || ''}`.trim());
+        if (err.status >= 500) logger.error?.(`log-meal ${err.status} ${err.code || ''} ${err.detail || ''}`.trim());
         send(res, err.status, { error: err.message });
         return;
       }

@@ -503,3 +503,32 @@ test('handler: unexpected errors never leak details', async () => {
   assert.ok(!res.body.includes('sk-ant'));
   assert.ok(logged.every((m) => !m.includes('sk-ant')));
 });
+
+test('upstream rejections name what to check and log the reason without the key', async () => {
+  const auth = fromUpstreamError(Object.assign(new Error('invalid x-api-key sk-ant-abc123'), { status: 401, type: 'authentication_error' }));
+  assert.equal(auth.status, 502);
+  assert.equal(auth.code, 'upstream_auth');
+  assert.match(auth.message, /ANTHROPIC_API_KEY/);
+  assert.ok(!auth.detail.includes('sk-ant'));
+  assert.match(auth.detail, /^upstream 401 authentication_error/);
+
+  const credit = fromUpstreamError(Object.assign(new Error('400'), { status: 400, error: { error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the API.' } } }));
+  assert.equal(credit.code, 'upstream_billing');
+  assert.match(credit.message, /no credit/);
+
+  assert.equal(fromUpstreamError(Object.assign(new Error('x'), { status: 402 })).code, 'upstream_billing');
+  assert.equal(fromUpstreamError(Object.assign(new Error('x'), { status: 403 })).code, 'upstream_forbidden');
+
+  const shape = fromUpstreamError(Object.assign(new Error('400'), { status: 400, error: { error: { type: 'invalid_request_error', message: 'tools.1.type: unsupported' } } }));
+  assert.equal(shape.code, 'upstream_rejected');
+  assert.match(shape.detail, /tools\.1\.type: unsupported/);
+
+  const res = fakeRes();
+  const logged = [];
+  const anthropic = { messages: { create: async () => { throw Object.assign(new Error('400'), { status: 400, error: { error: { type: 'invalid_request_error', message: 'tools.1.type: unsupported' } } }); } } };
+  await createHandler({ env: { ANTHROPIC_API_KEY: 'test' }, getVerifier: allowAll, getAnthropic: () => anthropic, logger: { error: (m) => logged.push(m) } })(
+    { method: 'POST', headers: { authorization: 'Bearer good' }, body: { text: 'eggs' } }, res);
+  assert.equal(res.statusCode, 502);
+  assert.ok(!res.body.includes('tools.1.type'));
+  assert.ok(logged.some((m) => m.includes('tools.1.type: unsupported')));
+});
