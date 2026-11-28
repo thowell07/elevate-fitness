@@ -14,8 +14,8 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const AGENT_LIMITS = Object.freeze({
   maxTurns: 6,
   maxTokens: 8000, // thinking counts toward this, so leave room beyond the answer
-  callTimeoutMs: 20_000,
-  deadlineMs: 40_000, // under the app's 45 s client timeout and the function's 60 s maxDuration
+  callTimeoutMs: 45_000, // a turn with several web searches can take a while
+  deadlineMs: 52_000, // under the app's 57 s client timeout and the function's 60 s maxDuration
   usdaTimeoutMs: 8_000,
 });
 
@@ -89,6 +89,7 @@ export async function runMealAgent({
     if (remaining < 3_000) throw new MealError(503, 'Reading the meal took too long. Try again.', { code: 'timeout' });
 
     let response;
+    const callTimeout = Math.min(limits.callTimeoutMs, remaining - 1_000);
     for (;;) {
       try {
         response = await anthropic.messages.create(
@@ -104,7 +105,8 @@ export async function runMealAgent({
             output_config: { effort: config.effort },
             messages,
           },
-          { timeout: Math.min(limits.callTimeoutMs, remaining - 1_000), maxRetries: 1 },
+          // One automatic retry only when a second full attempt still fits before the deadline.
+          { timeout: callTimeout, maxRetries: callTimeout * 2 < remaining ? 1 : 0 },
         );
         break;
       } catch (err) {
